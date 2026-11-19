@@ -1,0 +1,175 @@
+name: CI
+
+# Manual-only: builds/tests run locally before each PR.
+on:
+  workflow_dispatch:
+
+jobs:
+  build-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        cuda: ['OFF', 'ON']
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      
+      # Install dependencies per platform
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libssl-dev \
+            libgl1-mesa-dev libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0
+      
+      - name: Install CUDA (Linux)
+        if: runner.os == 'Linux' && matrix.cuda == 'ON'
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-toolkit-12-4 cuda-runtime-12-4
+      
+      - name: Install Qt (Linux)
+        if: runner.os == 'Linux'
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '6.6.1'
+          host: 'linux'
+          target: 'desktop'
+          arch: 'gcc_64'
+          cache: true
+      
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install -y cmake openssl
+          refreshenv
+      
+      - name: Install CUDA (Windows)
+        if: runner.os == 'Windows' && matrix.cuda == 'ON'
+        run: |
+          choco install -y cuda --version=12.4.1
+          refreshenv
+      
+      - name: Install Qt (Windows)
+        if: runner.os == 'Windows'
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '6.6.1'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2019_64'
+          cache: true
+      
+      - name: Install Qt (macOS)
+        if: runner.os == 'macOS'
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '6.6.1'
+          host: 'mac'
+          target: 'desktop'
+          arch: 'clang_64'
+          cache: true
+      
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake openssl
+      
+      # Note: macOS does not support CUDA, so we skip CUDA builds on this platform
+      
+      # Configure build
+      - name: Configure CMake (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBITCRACK_FORCE_FETCH_CATCH2=ON -DBITCRACK_BUILD_TESTS=ON -DDISABLE_CUDA=${{ matrix.cuda == 'OFF' && 'ON' || 'OFF' }}
+      
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        env:
+          OPENSSL_ROOT_DIR: C:/Program Files/OpenSSL-Win64
+        run: cmake -S . -B build_vs -G "Visual Studio 17 2022" -A x64 -DBITCRACK_FORCE_FETCH_CATCH2=ON -DDISABLE_CUDA=${{ matrix.cuda == 'OFF' && 'ON' || 'OFF' }}
+      
+      - name: Configure CMake (macOS)
+        if: runner.os == 'macOS'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBITCRACK_FORCE_FETCH_CATCH2=ON -DDISABLE_CUDA=ON -DBITCRACK_DISABLE_GPU=ON -DCMAKE_CXX_FLAGS="-Wno-nan-infinity-disabled"
+      
+      # Build
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cmake --build build --config Release
+      
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build_vs --config Release -- /m:4
+      
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: cmake --build build --config Release
+      
+      # Run tests
+      - name: Run tests (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          TEST_BIN=""
+          for candidate in \
+            ./build/Release/bitcrack_tests \
+            ./build/bitcrack_tests \
+            ./build/tests/bitcrack_tests; do
+            if [ -x "$candidate" ]; then
+              TEST_BIN="$candidate"
+              break
+            fi
+          done
+          if [ -z "$TEST_BIN" ]; then
+            TEST_BIN="$(find ./build -type f -name bitcrack_tests -perm -111 | head -n1 || true)"
+          fi
+          if [ -z "${TEST_BIN}" ] || [ ! -x "${TEST_BIN}" ]; then
+            echo "bitcrack_tests binary not found under ./build" >&2
+            find ./build -name 'bitcrack_tests*' -print || true
+            exit 1
+          fi
+          echo "Running ${TEST_BIN}"
+          "${TEST_BIN}" --reporter console
+      
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        run: build_vs\Release\bitcrack_tests.exe
+      
+      - name: Run tests (macOS)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: ./build/Release/bitcrack_tests
+      
+      # Upload artifacts
+      - name: Upload artifacts (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitcrack-distributed-linux-x64${{ matrix.cuda == 'ON' && '-cuda' || '' }}
+          path: dist/linux/**
+          retention-days: 30
+      
+      - name: Upload artifacts (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitcrack-distributed-windows-x64${{ matrix.cuda == 'ON' && '-cuda' || '' }}
+          path: dist/windows/**
+          retention-days: 30
+      
+      - name: Upload artifacts (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitcrack-distributed-macos-x64
+          path: build/Release/bitcrack-distributed*
+          retention-days: 30

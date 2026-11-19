@@ -1,0 +1,118 @@
+#pragma once
+
+#include "config.h"
+
+#ifdef GUI_AVAILABLE
+
+#include <QMainWindow>
+#include "BitCrackGUIExport.h"
+#include <QPointer>
+#include <memory>
+#include <vector>
+#include "BitcoinWallet.h"
+
+class ConfigManager;
+struct PuzzleSolvedEvent;
+class BitCrackEngine;
+class NetworkManager;
+class ResourceMonitor;
+class QTabWidget;
+class QLabel;
+class QComboBox;
+class QProgressBar;
+class QTimer;
+class QPushButton;
+class QCheckBox;
+class QPlainTextEdit;
+class QTableView;
+class QStandardItemModel;
+class QCloseEvent;
+
+class BITCRACKGUI_API MainWindow : public QMainWindow {
+    Q_OBJECT
+public:
+    MainWindow(ConfigManager* config_manager,
+               BitCrackEngine* engine,
+               NetworkManager* network_manager,
+               ResourceMonitor* resource_monitor,
+               QWidget* parent = nullptr);
+
+    // Public method for Logger callback to append messages (thread-safe via Qt)
+    void appendLogMessage(const QString& text);
+
+private slots:
+    void refreshTelemetry();
+    void showChunkInfoDialog();
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
+private:
+    void buildUi();
+    QWidget* buildTopBar();
+    QWidget* buildFooter();
+    QWidget* buildDashboardTab();
+    QWidget* buildWorkflowTab();
+    QWidget* buildWalletTab();
+    QWidget* buildNetworkTab();
+    QWidget* buildLogsTab();
+    void applyUiPreferences();
+    void wireTimers();
+    void enforceRewardAddressPolicy();
+    bool isRewardAddressValid(const std::string& address) const;
+    bool isUsingPlaceholderReward(const std::string& address) const;
+    void autoStartIfReady();
+    void showAutoStartBanner(const QString& text, const QString& bg_color);
+    void hideAutoStartBanner();
+    void onStartClicked();
+    void processPuzzleSolvedEvents();
+    void showPuzzleSolvedDialog(const PuzzleSolvedEvent& evt);
+    void showPayoutDialog(const PuzzleSolvedEvent& evt);
+
+    ConfigManager* config_manager_;
+    BitCrackEngine* engine_;
+    NetworkManager* network_manager_;
+    ResourceMonitor* resource_monitor_;
+
+    QTabWidget* tabs_ = nullptr;
+    QLabel* status_label_ = nullptr;
+    QLabel* gpu_status_label_ = nullptr;
+    QLabel* electrum_label_ = nullptr;
+    // Telemetry labels
+    QLabel* keys_label_ = nullptr; // kept for backward compatibility but now part of telemetry
+    QLabel* total_keys_label_ = nullptr;
+    QLabel* cpu_usage_label_ = nullptr;
+    QLabel* gpu_usage_label_ = nullptr;
+    QLabel* engine_state_label_ = nullptr;
+    QLabel* range_label_ = nullptr;
+    QLabel* network_completion_label_ = nullptr;
+    QLabel* chunk_label_ = nullptr;
+    QLabel* recent_chunk_label_ = nullptr;
+        QLabel* chunk_size_label_ = nullptr;
+    QString last_chunk_id_;
+    QString last_chunk_start_;
+    QString last_chunk_end_;
+    // Contributions / puzzle labels
+    QLabel* puzzle_label_ = nullptr;
+    QLabel* contributions_label_ = nullptr;
+    QLabel* chunks_label_ = nullptr; // deprecated visual slot but keep for compatibility
+    QLabel* peers_label_ = nullptr;
+    QLabel* reward_value_label_ = nullptr;
+    QLabel* peers_info_label_ = nullptr;
+    QLabel* wallet_status_label_ = nullptr;
+    QComboBox* server_combo_ = nullptr;
+    QProgressBar* cpu_progress_ = nullptr;
+    QProgressBar* gpu_progress_ = nullptr;
+    QProgressBar* workload_progress_ = nullptr;
+    QPlainTextEdit* log_console_ = nullptr;
+    QTableView* workflow_table_ = nullptr;
+    QStandardItemModel* workflow_model_ = nullptr;
+    QTimer* telemetry_timer_ = nullptr;
+    bool reward_valid_ = false;
+    bool reward_warning_shown_ = false;
+    bool auto_start_triggered_ = false;
+    QLabel* auto_start_banner_ = nullptr;
+    std::vector<PayoutOutput> last_payouts_;
+};
+
+#endif // GUI_AVAILABLE

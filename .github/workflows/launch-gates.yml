@@ -1,0 +1,172 @@
+name: Launch gates
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: launch-gates-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline:
+    name: ${{ matrix.mode }}
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: Release
+            flags: ''
+          - mode: ASan
+            flags: '-fsanitize=address -fno-omit-frame-pointer -g'
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libssl-dev
+      - name: Configure CPU build
+        run: |
+          cmake -S "$GITHUB_WORKSPACE" -B "$RUNNER_TEMP/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DDISABLE_CUDA=ON \
+            -DBITCRACK_ENABLE_GUI=OFF -DBITCRACK_COPY_BUILD_TO_DIST=OFF \
+            -DBITCRACK_BUILD_TESTS=ON \
+            -DCMAKE_CXX_FLAGS="${{ matrix.flags }}" \
+            -DCMAKE_EXE_LINKER_FLAGS="${{ matrix.flags }}"
+      - name: Build application and tests
+        run: cmake --build "$RUNNER_TEMP/build" --target bitcrack_tests logger_file_runner --parallel 2
+      - name: Run non-hidden tests
+        working-directory: ${{ runner.temp }}/build/Release
+        run: |
+          set -euo pipefail
+          timeout 8m ./bitcrack_tests --reporter console 2>&1 | tee "$RUNNER_TEMP/tests.log"
+      - name: Two-node search and shutdown smoke
+        env:
+          TMPDIR: ${{ runner.temp }}
+          KEEP_DIR: '1'
+        run: |
+          set -euo pipefail
+          timeout 4m bash "$GITHUB_WORKSPACE/scripts/smoke_two_nodes.sh" \
+            "$RUNNER_TEMP/build/Release/bitcrack-distributed" 2>&1 | tee "$RUNNER_TEMP/smoke.log"
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-${{ matrix.mode }}-diagnostics
+          path: |
+            ${{ runner.temp }}/tests.log
+            ${{ runner.temp }}/smoke.log
+            ${{ runner.temp }}/bitcrack_smoke.*/**/out.log
+          retention-days: 7
+
+  windows-cpu:
+    name: Windows CPU
+    if: github.event_name != 'schedule'
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenSSL
+        shell: pwsh
+        timeout-minutes: 125
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          if (Test-Path 'C:/Program Files/OpenSSL-Win64/include/openssl/ssl.h') {
+            Write-Host "OpenSSL already installed"
+            exit 0
+          }
+          for ($attempt = 1; $attempt -le 2; $attempt++) {
+            Write-Host "Installing OpenSSL (attempt $attempt of 2)"
+            choco install -y openssl --no-progress --execution-timeout=3600
+            $installExitCode = $LASTEXITCODE
+            if ($installExitCode -in 0, 3010) {
+              exit 0
+            }
+            Write-Warning "OpenSSL installation attempt $attempt failed with exit code $installExitCode"
+            if ($attempt -lt 2) {
+              Start-Sleep -Seconds 30
+            }
+          }
+          $log = Join-Path $env:ChocolateyInstall 'logs/chocolatey.log'
+          if (Test-Path $log) {
+            Get-Content $log -Tail 80
+          }
+          throw "OpenSSL installation failed after 2 attempts (exit code $installExitCode). See Chocolatey diagnostics above."
+      - name: Configure CPU build
+        env:
+          OPENSSL_ROOT_DIR: C:/Program Files/OpenSSL-Win64
+        run: >
+          cmake -S . -B build_win -G "Visual Studio 17 2022" -A x64
+          -DDISABLE_CUDA=ON -DBITCRACK_ENABLE_GUI=OFF
+          -DBITCRACK_COPY_BUILD_TO_DIST=OFF -DBITCRACK_BUILD_TESTS=ON
+          -DBITCRACK_FORCE_FETCH_CATCH2=ON "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /DNOMINMAX"
+      - name: Build application and tests
+        run: cmake --build build_win --config Release --target bitcrack_tests bitcrack-distributed -- /m:4
+      - name: Run tests
+        working-directory: build_win/Release
+        timeout-minutes: 25
+        shell: bash
+        run: ./bitcrack_tests.exe --reporter console 2>&1 | tee tests.log
+      - name: CLI smoke (derive-address vector, kernel benchmark)
+        working-directory: build_win/Release
+        shell: pwsh
+        run: |
+          .\bitcrack-distributed.exe --version
+          $derive = .\bitcrack-distributed.exe --derive-address 1
+          if (-not ($derive -match "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH")) {
+            throw "derive-address known vector failed: $derive"
+          }
+          .\bitcrack-distributed.exe --bench 5
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-windows-cpu-diagnostics
+          path: build_win/Release/tests.log
+          retention-days: 7
+
+  tsan:
+    name: TSan focused
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      TSAN_OPTIONS: halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libssl-dev
+      - name: Configure CPU TSan build
+        run: |
+          cmake -S "$GITHUB_WORKSPACE" -B "$RUNNER_TEMP/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DDISABLE_CUDA=ON \
+            -DBITCRACK_ENABLE_GUI=OFF -DBITCRACK_COPY_BUILD_TO_DIST=OFF \
+            -DBITCRACK_BUILD_TESTS=ON -DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=ON \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -g" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+      - name: Build application and tests
+        run: cmake --build "$RUNNER_TEMP/build" --target bitcrack_tests logger_file_runner --parallel 2
+      - name: Run focused persistence, claims, and shutdown tests
+        working-directory: ${{ runner.temp }}/build/Release
+        run: |
+          set -euo pipefail
+          timeout 8m ./bitcrack_tests \
+            '[restart],[workstate_hydration],[independent_hydration],[pr15],[pr27],[pr42],[pr66],[pr9],[pr54]' \
+            --reporter console 2>&1 | tee "$RUNNER_TEMP/tsan.log"
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-TSan-diagnostics
+          path: ${{ runner.temp }}/tsan.log
+          retention-days: 7

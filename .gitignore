@@ -1,0 +1,123 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+out/
+.vs/
+.vscode/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+!cmake/*.cmake
+!cmake/*.h.in
+
+# Compiled binaries
+*.exe
+*.app
+*.out
+bitcrack-distributed*
+!bitcrack-distributed.cpp
+
+# Object files
+*.o
+*.obj
+*.lo
+*.la
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.pdb
+*.ilk
+
+# Temporary files
+*.tmp
+*.temp
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# IDE files
+*.user
+*.suo
+*.sln.docstates
+*.vcxproj.filters
+*.vcxproj.user
+
+# Qt generated files
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+*.pro.user
+*.qmake.stash
+
+# CUDA compiled files
+*.ptx
+*.cubin
+*.fatbin
+
+# Configuration and logs
+# Local configuration (keep secrets out of repo)
+config.json
+config.local.json
+config_node*.json
+*.log
+logs/
+
+# Runtime state files
+workstate_*.json
+chainstore.bin
+chainstore_*.bin
+
+# Temporary debug files
+debug_*.cpp
+simple_test.cpp
+test_*.cpp
+# ...but never the real Catch2 suite under tests/
+!tests/test_*.cpp
+*.py
+fix_*.ps1
+cmds.txt
+out.txt
+out_*.txt
+
+# Build directories (conservative list)
+build/
+build_*/
+build*/
+dist/
+out_build/
+out_build/_deps/
+
+# Test results
+test-results/
+*.xml
+*.json
+!vcpkg.json
+
+# Package managers
+node_modules/
+.npm/
+.yarn/
+
+# Platform specific
+# Windows
+*.bat
+# ...except the documented build helper (README/CONTRIBUTING reference it)
+!build.bat
+*.cmd
+*.lnk
+# macOS
+.DS_Store?
+.Spotlight-V100
+.Trashes
+# Linux
+*~
