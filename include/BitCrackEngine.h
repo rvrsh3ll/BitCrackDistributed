@@ -46,7 +46,7 @@ struct SearchStatistics {
 };
 
 class BitCrackEngine {
-    friend struct BitCrackEngineTestAccess;  // PR 53
+    friend struct BitCrackEngineTestAccess;
 public:
     BitCrackEngine(const Config& config, ResourceMonitor* resource_monitor);
     ~BitCrackEngine();
@@ -202,7 +202,7 @@ private:
             return static_cast<size_t>(hash ^ (hash >> 32));
         }
     };
-    // PR 54: the search targets are an immutable snapshot. Writers (network
+    // The search targets are an immutable snapshot. Writers (network
     // TARGET/TARGETBIN via addTarget/addBinaryTarget, removeTarget, the
     // standalone puzzle switch) copy it, change the copy and publish it under
     // targets_mutex_ (a leaf lock), bumping targets_gen_; a CPU worker keeps
@@ -244,7 +244,7 @@ private:
     
     // Batch processing
     mutable std::mutex range_mutex_;
-    // PR 54: batches handed out by getNextBatch() and not finished yet
+    // Batches handed out by getNextBatch() and not finished yet
     // (guarded by range_mutex_; batch_cv_ is signalled when one finishes).
     // The standalone puzzle switch waits for 0 so that no batch of the old
     // range is checked against the new puzzle's targets.

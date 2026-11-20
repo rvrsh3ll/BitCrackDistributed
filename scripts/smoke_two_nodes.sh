@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Two-node local smoke test for clean shutdown (PR 3).
+# Two-node local smoke test for clean shutdown.
 #
 # Starts node A (--daemon, port 3338) and node B (--console, port 8335,
 # bootstrapping to A) on 127.0.0.1, waits until they are connected, sends
@@ -9,8 +9,8 @@
 #
 # Usage: scripts/smoke_two_nodes.sh [path/to/bitcrack-distributed]
 # Before SIGINT it also waits until BOTH nodes have a consensus-approved chunk
-# and their engines are searching (PR 7: a 2-node network must search), and
-# prints each node's time-to-search after connecting (PR 10).
+# and their engines are searching (a 2-node network must search), and
+# prints each node's time-to-search after connecting.
 #
 # Env:   PORT_A (3338) PORT_B (8335) CONNECT_TIMEOUT (30) STOP_TIMEOUT (10)
 #        SEARCH_TIMEOUT (90): seconds after connecting for both nodes to log
@@ -19,15 +19,15 @@
 #        KEEP_DIR=1 to keep the temp dir with logs (a failed run keeps it
 #        anyway, with both nodes' full out.log, unless KEEP_DIR=0).
 #        STALL_GAP_MS (2000): a gap between two polls longer than this is a
-#        box stall and is not counted against the timeouts (PR 59).
+#        box stall and is not counted against the timeouts.
 #        INJECT_STALL=<s> / INJECT_HANG=<s> (tests of the above): when the
 #        script starts waiting for node B to exit, freeze the script and B
 #        (a box stall: must still PASS) or only B (a hang: must FAIL with
 #        "node B still running") for <s> seconds.
 #        BIN_B: run node B with another binary, e.g. an older build without
-#        peer authentication (PR 19 mixed-network check). Then A must treat
+#        peer authentication (mixed-network check). Then A must treat
 #        B as an older peer and both must still search.
-#        SOLVED=1 (PR 48): both data directories start with a found-key file
+#        SOLVED=1: both data directories start with a found-key file
 #        for puzzle 71 (status payout_confirmed, a dummy key); both nodes must
 #        skip it at startup and search puzzle 72. Needs both nodes on BIN.
 #        It also runs both nodes on regtest with a regtest_test_puzzle: puzzle
@@ -35,14 +35,14 @@
 #        and one node must find that key through the P2P chunk path (found-key
 #        file for puzzle 72 with the planted key; the key never in a log).
 #        FIND_TIMEOUT (120): seconds after both search for the find.
-#        LATE_JOINER=1 (PR 82): once A is a few blocks ahead, B restarts with
+#        LATE_JOINER=1: once A is a few blocks ahead, B restarts with
 #        no chain state, must sync A's chain, then replay all of it (nothing
 #        unlinked) after one more restart with state kept.
-#        RESTART_KEEP_STATE=1 (PR 81): once both have stored a KeyspaceBlock,
+#        RESTART_KEEP_STATE=1: once both have stored a KeyspaceBlock,
 #        restart B then A with their data directories kept; each must reload
 #        its chain, reconnect and keep getting chunks approved, with no block
 #        rejections, strikes or disconnects. BLOCK_TIMEOUT (120).
-#        PR 80: the other node must then verify the finder's KEYPROOF and
+#        The other node must then verify the finder's KEYPROOF and
 #        leave puzzle 72.
 set -u
 
@@ -225,16 +225,16 @@ done
 # Time from "both connected" to each node's engine searching (+-100 ms poll).
 echo "time-to-search: A=${SEARCH_MS_A} ms B=${SEARCH_MS_B} ms"
 echo "both nodes searching $((SECONDS - search_t0))s after connecting"
-# PR 10: claims wait for the HELLO handshake, so no proposer-mismatch strikes.
+# Claims wait for the HELLO handshake, so no proposer-mismatch strikes.
 for n in a b; do
     grep -q "Chunk claim proposer mismatch" "$WORK/$n/out.log" && fail "node $n saw a chunk claim proposer mismatch"
 done
 # With a uuid configured, the alias comes from it (first 12 hex chars), not
-# from the reward-address prefix (PR 17). Each side must see the other's.
+# from the reward-address prefix. Each side must see the other's.
 grep -q "Peer identified as: 222222222222" "$WORK/a/out.log" || fail "node A did not see B's uuid alias 222222222222"
 grep -q "Peer identified as: 111111111111" "$WORK/b/out.log" || fail "node B did not see A's uuid alias 111111111111"
 echo "aliases: A=111111111111 B=222222222222 (from uuid)"
-# PR 19: peer authentication. Both new nodes must authenticate each other
+# Peer authentication. Both new nodes must authenticate each other
 # (AUTHCHALLENGE/AUTH after HELLO) and pin the other's key. With an older
 # node B (BIN_B), A must fall back to treating it as an older peer.
 if [[ $MIXED -eq 0 ]]; then
@@ -248,7 +248,7 @@ else
     grep -q "Peer 222222222222 authenticated" "$WORK/a/out.log" && fail "node A claims to have authenticated old node B"
     echo "auth: B is an older node; A treated it as an older peer and both searched"
 fi
-# PR 22/23: honest nodes never have a CHUNKDONE or CONTRIB rejected for its signing key.
+# Honest nodes never have a CHUNKDONE or CONTRIB rejected for its signing key.
 for n in a b; do
     if grep -qE "CHUNKDONE REJECTED|CONTRIB REJECTED" "$WORK/$n/out.log"; then
         fail "node $n rejected a completion: $(grep -m1 -E 'CHUNKDONE REJECTED|CONTRIB REJECTED' "$WORK/$n/out.log")"
@@ -275,7 +275,7 @@ if [[ "$SOLVED" == "1" ]]; then
     grep -q "target=$FIND_TARGET" "$FOUND_FILE" || fail "found-key file has the wrong target"
     grep -q "KEY FOUND by" "$WORK/$FINDER/out.log" || fail "node $FINDER wrote a found-key file without logging KEY FOUND"
     echo "find: node $FINDER found the planted key of test puzzle 72 via P2P chunks ($(basename "$FOUND_FILE"))"
-    # PR 80: the other node leaves puzzle 72 only on a verified solve: the
+    # The other node leaves puzzle 72 only on a verified solve: the
     # finder's KEYPROOF (signed by the found key; the key itself never sent).
     OTHER=a; [[ "$FINDER" == "a" ]] && OTHER=b
     deadline_start 30
@@ -291,7 +291,7 @@ if [[ "$SOLVED" == "1" ]]; then
 fi
 echo "strikes: A=$(grep -c " strike [0-9]" "$WORK/a/out.log") B=$(grep -c " strike [0-9]" "$WORK/b/out.log")"
 if [[ "${RESTART_KEEP_STATE:-0}" == "1" || "${LATE_JOINER:-0}" == "1" ]]; then
-    # PR 81: restart both nodes (one at a time) with their data directories
+    # Restart both nodes (one at a time) with their data directories
     # (chainstore.bin/meta, workstate, ledger) kept. The persisted chain must
     # load, block sync must keep working (no Merkle-root strikes), and both
     # must reconnect and keep getting chunks approved.
@@ -349,7 +349,7 @@ if [[ "${RESTART_KEEP_STATE:-0}" == "1" || "${LATE_JOINER:-0}" == "1" ]]; then
     }
 fi
 if [[ "${LATE_JOINER:-0}" == "1" ]]; then
-    # PR 82: B leaves, loses its chain, and rejoins; it must sync A's whole
+    # B leaves, loses its chain, and rejoins; it must sync A's whole
     # chain over GETBLOCKS/HEADERS/GETDATA/BLOCK, persist it, and replay it
     # all (nothing "not linked") after one more restart with state kept.
     # Let A get a few blocks ahead first.
@@ -453,7 +453,7 @@ for n in a b; do
     grep -q "\[ENGINE\] Search stopped" "$WORK/$n/out.log" || fail "node $n engine was searching but did not log 'Search stopped'"
     echo "node $n: engine was searching and stopped cleanly"
 done
-# PR 18: each node keeps a persistent signing key in node_key.json, owner
+# Each node keeps a persistent signing key in node_key.json, owner
 # read/write only, and the private key never shows up in its log.
 file_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 KEY_NODES="a b"; [[ $MIXED -eq 1 ]] && KEY_NODES="a"  # an older B may predate node_key.json
@@ -485,7 +485,7 @@ if [[ "$SOLVED" == "1" ]]; then
     [[ "$(file_mode "$FOUND_FILE")" == "600" ]] || fail "found-key file $FOUND_FILE is not mode 600"
     echo "solved puzzle: both nodes skipped puzzle 71 (found-key file), initialized puzzle 72 and node $FINDER found its key"
 fi
-# PR 84: the smoke nodes stay on loopback; they must never reach a real peer
+# The smoke nodes stay on loopback; they must never reach a real peer
 # (the shipped default bootstrap list names public seeds).
 for n in a b; do
     bad=$(grep -oE "Connected to peer [^ ]+( \([0-9.]+\))?:[0-9]+" "$WORK/$n/out.log" | grep -vE "(^Connected to peer 127\.|\(127\.)" || true)

@@ -1,4 +1,4 @@
-// PR 7: a node may claim work with one connected peer (option A).
+// A node may claim work with one connected peer (option A).
 //
 // The claim gate is now ">= 1 connected peer" for every node; the vote rule is
 // unchanged (approvals >= (connected+1)/2 + 1, own vote included), so in a
@@ -166,7 +166,7 @@ TEST_CASE("Two non-genesis nodes over loopback both get a chunk approved and ass
                           std::chrono::seconds(8)));
 
         // Each node can only reach the approval threshold (2 of 2) with the other's vote.
-        // Since PR 10 the first claim waits for the HELLO handshake and the node
+        // The first claim waits for the HELLO handshake and the node
         // that loses the conflict for the first chunk retries via the idle claim
         // retry, so both are assigned within ~2-3 s of connecting (it was ~11 s);
         // tests/test_hello_before_claim.cpp asserts the timing.

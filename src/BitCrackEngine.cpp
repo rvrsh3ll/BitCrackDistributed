@@ -87,10 +87,10 @@ BitCrackEngine::BitCrackEngine(const Config& config, ResourceMonitor* resource_m
                                             config_.regtest_test_puzzle.range_start,
                                             config_.regtest_test_puzzle.range_end);
 
-    // PR 55: a standalone node restarting on a puzzle it already solved (per
+    // A standalone node restarting on a puzzle it already solved (per
     // its found-key files) starts on the next unsolved defined puzzle, in
-    // order, like the network flow at startup (PR 48) and the standalone
-    // switch (PR 53), instead of searching the solved range again. With none
+    // order, like the network flow at startup and the standalone
+    // switch, instead of searching the solved range again. With none
     // left it stays idle: no targets and no range, so start() defers.
     bool standalone_idle = false;
     if (!config_.network.enable_p2p) {
@@ -164,7 +164,7 @@ BitCrackEngine::BitCrackEngine(const Config& config, ResourceMonitor* resource_m
     // When P2P networking is enabled, leave the range unset so the engine waits for WORKASSIGN.
     if (current_range_.start.empty()) {
         if (standalone_idle) {
-            notified_work_depleted_.store(true);  // as after the last puzzle (PR 53)
+            notified_work_depleted_.store(true);  // as after the last puzzle
         } else if (!config_.network.enable_p2p) {
             // Use puzzle range if available, otherwise custom ranges, otherwise default full range
             auto puzzle = puzzle_manager_->getCurrentPuzzle();
@@ -279,7 +279,7 @@ void BitCrackEngine::stop() {
         should_stop_ = true;
         running_ = false;
         main_thread = std::move(main_thread_);
-        batch_cv_.notify_all();  // PR 54: wake a puzzle switch waiting on batches
+        batch_cv_.notify_all();  // Wake a puzzle switch waiting on batches
         cpu_threads.swap(cpu_threads_);
     }
     
@@ -330,7 +330,7 @@ void BitCrackEngine::setSearchRange(const KeyRange& range) {
     }
     {
         // Reset range and batching state for a fresh assignment, together
-        // (PR 54: a worker could otherwise take a batch from the old cursor
+        // (a worker could otherwise take a batch from the old cursor
         // in the new range). Lock order: range_mutex_ -> state_mutex_.
         std::lock_guard<std::mutex> lock2(range_mutex_);
         std::lock_guard<std::mutex> lock1(state_mutex_);
@@ -703,7 +703,7 @@ void BitCrackEngine::cpuSearchWorker(int thread_id) {
         sp.paused = &paused_;
         sp.keys_done = &keys_checked_cpu_;
         sp.refresh_targets = [&](secp_scan::Targets& t) {
-            // PR 54: re-read the target snapshot only when it was replaced.
+            // Re-read the target snapshot only when it was replaced.
             if (targets_gen_.load(std::memory_order_acquire) != targets_seen_gen) {
                 targets = targetsSnapshot(&targets_seen_gen);
                 rebuildTargets();
@@ -735,7 +735,7 @@ void BitCrackEngine::cpuSearchWorker(int thread_id) {
         }
 
         if (found) {
-            // PR 33: the key itself is never logged; the found-key handler
+            // The key itself is never logged; the found-key handler
             // (network layer, or the standalone flow in main.cpp) writes it
             // to the owner-only found-key file.
             Logger::info(std::string("[CPU") + std::to_string(thread_id) + "] FOUND KEY! (private key withheld from logs)");
@@ -804,7 +804,7 @@ bool BitCrackEngine::checkKeyIn(const std::string& private_key_hex, const Target
         std::copy_n(payload.begin(), 20, arr.begin());
         return targets.binary.find(arr) != targets.binary.end();
     } catch (const std::exception& e) {
-        Logger::error(std::string("checkKey exception: ") + e.what());  // PR 33: no key in logs
+        Logger::error(std::string("checkKey exception: ") + e.what());  // No key in logs
         throw; // Re-throw to trigger outer handler
     }
 }
@@ -896,7 +896,7 @@ bool BitCrackEngine::getNextBatch(std::string& start, std::string& end, uint32_t
     if (size64 != UINT64_MAX) { size64 = size64 + 1; }
     if (size64 == 0) size64 = batch_size;
     current_batch_size_ = size64;
-    ++batches_in_flight_;  // PR 54: ended by batchDone()
+    ++batches_in_flight_;  // Ended by batchDone()
     return true;
 }
 
@@ -945,7 +945,7 @@ void BitCrackEngine::updateStatistics() {
 bool BitCrackEngine::advanceStandalonePuzzle() {
     if (!puzzle_manager_) return false;
 
-    // PR 53: advance like the network flow does (PR 48/50): to the next
+    // Advance like the network flow does: to the next
     // defined puzzle, in order, that this node has not solved per its
     // found-key files. It used to step +1, onto puzzles solved here and, past
     // the last one, onto an undefined puzzle (no target, empty range).
@@ -985,7 +985,7 @@ bool BitCrackEngine::advanceStandalonePuzzle() {
     new_range.end = next_puzzle.range_end;
     new_range.bits = 256;
 
-    // PR 54: this runs on a worker thread while the other workers search.
+    // This runs on a worker thread while the other workers search.
     // Wait (under range_mutex_, so no new batch can be handed out) until no
     // batch of the old range is in flight, then switch targets, range and
     // batch cursor in one step: no worker ever checks old-range keys against

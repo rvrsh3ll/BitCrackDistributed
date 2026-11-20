@@ -4,7 +4,7 @@
 #include <vector>
 #include "EllipticCurve.h"
 
-// PR 31: Bitcoin networks for address validation. Testnet covers testnet3,
+// Bitcoin networks for address validation. Testnet covers testnet3,
 // testnet4 and signet (same address prefixes).
 enum class BitcoinNetwork { Mainnet, Testnet, Regtest };
 bool parseBitcoinNetwork(const std::string& name, BitcoinNetwork& out);
@@ -23,7 +23,7 @@ struct DecodedAddress {
 // belongs to `network`. Returns "" if valid, else a human-readable reason.
 std::string validateAddressForNetwork(const std::string& address, BitcoinNetwork network);
 
-// PR 37: scriptPubKey -> address on `network` (inverse of
+// scriptPubKey -> address on `network` (inverse of
 // addressToScriptPubKey): P2PKH, P2SH, segwit v0 (bech32) and v1..v16
 // (bech32m). "" for a script with no address form (e.g. P2PK, OP_RETURN).
 std::string scriptPubKeyToAddress(const std::vector<unsigned char>& script, BitcoinNetwork network);

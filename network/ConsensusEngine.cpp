@@ -449,7 +449,7 @@ bool ConsensusEngine::addKeyspaceBlock(const KeyspaceBlock& keyspace_block, std:
     return addBlock(block, error_message);
 }
 
-// PR 82: block locator for GETBLOCKS (newest first: 10 consecutive hashes,
+// Block locator for GETBLOCKS (newest first: 10 consecutive hashes,
 // then exponentially sparser, always ending with genesis).
 std::vector<std::string> ConsensusEngine::getLocator() const {
     std::lock_guard<std::mutex> lock(mutex_);

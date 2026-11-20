@@ -1,4 +1,4 @@
-// PR 14: votes replayed after a late proposal finalize the claim like live votes.
+// Votes replayed after a late proposal finalize the claim like live votes.
 //
 // A vote that arrives before its proposal is buffered and replayed when the
 // proposal shows up. When the replayed votes reached quorum, the replay only

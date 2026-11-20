@@ -1,5 +1,5 @@
 #pragma once
-// PR 58: wall-clock upper bounds in tests that survive a loaded or stalled box
+// Wall-clock upper bounds in tests that survive a loaded or stalled box
 // without hiding real hangs.
 //
 // A StallAwareTimer measures an operation like a stopwatch, but a helper

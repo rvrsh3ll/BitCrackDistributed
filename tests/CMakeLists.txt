@@ -76,13 +76,13 @@ set(TEST_SOURCES
     test_consensus_keyspace_blocks.cpp
     test_chainstore.cpp
     test_logger_file.cpp
-    # Orphaned consensus/claim/hydration tests (PR 0)
+    # Orphaned consensus/claim/hydration tests
     test_chunk_claim_timeout.cpp
     test_chunk_claim_two_node_approval.cpp
     test_random_chunk_assignment.cpp
     test_hydration.cpp
     test_independent_hydration.cpp
-    # PR 1: select() nfds + owned background thread
+    # select() nfds + owned background thread
     test_network_loopback.cpp
     test_bootstrap_resolve.cpp
     test_data_dir_default.cpp
@@ -91,120 +91,120 @@ set(TEST_SOURCES
     test_retired_ranges_fast.cpp
     test_scan_complete.cpp
     test_block_assembly_runs.cpp
-    test_claim_after_completion.cpp
+    test_claim_after_completion.cpp test_claim_only_when_idle.cpp
     test_rescan_ranges.cpp
-    # PR 2: stable peer IDs + per-peer thread reaping
+    # Stable peer IDs + per-peer thread reaping
     test_peer_identity.cpp
-    # PR 3: clean shutdown on SIGINT/SIGTERM + reward_address resolution
+    # Clean shutdown on SIGINT/SIGTERM + reward_address resolution
     test_shutdown_reward.cpp
-    # PR 4: shared HexMath helper
+    # Shared HexMath helper
     test_hexmath.cpp
-    # PR 5: bounded Electrum probe/calls off the constructor path
+    # Bounded Electrum probe/calls off the constructor path
     test_electrum_timeout.cpp
-    # PR 7: claim work with one connected peer
+    # Claim work with one connected peer
     test_two_node_claims.cpp
-    # PR 9: engine restart race during shutdown
+    # Engine restart race during shutdown
     test_shutdown_race.cpp
-    # PR 10: HELLO before first claim; idle claim retry
+    # HELLO before first claim; idle claim retry
     test_hello_before_claim.cpp
-    # PR 11: random-mode stall after the final chunk
+    # Random-mode stall after the final chunk
     test_random_mode_stall.cpp
-    # PR 12: chunk-claim conflicts by range overlap
+    # Chunk-claim conflicts by range overlap
     test_chunk_conflict_by_range.cpp
-    # PR 13: chunk-done by (peer, range); claim counters under the claim lock
+    # Chunk-done by (peer, range); claim counters under the claim lock
     test_chunk_done_by_range.cpp
-    # PR 14: replayed votes finalize claims like live votes
+    # Replayed votes finalize claims like live votes
     test_vote_replay_approval.cpp
-    # PR 15: WorkState keyspace blocks read under the lock
+    # WorkState keyspace blocks read under the lock
     test_workstate_blocks_concurrency.cpp
-    # PR 16: release a lost peer's claim state (last connection only)
+    # Release a lost peer's claim state (last connection only)
     test_peer_loss_claims.cpp
-    # PR 17: alias from the uuid when one is configured
+    # Alias from the uuid when one is configured
     test_alias_from_uuid.cpp
-    # PR 18: persistent node key + known-peers pinning store
+    # Persistent node key + known-peers pinning store
     test_node_identity.cpp
-    # PR 19: AUTHCHALLENGE/AUTH handshake, peer_auth policy, older-peer fallback
+    # AUTHCHALLENGE/AUTH handshake, peer_auth policy, older-peer fallback
     test_peer_auth_handshake.cpp
-    # PR 21: fixed-width EC hex encodings (pubkeys, generated private keys)
+    # Fixed-width EC hex encodings (pubkeys, generated private keys)
     test_ec_hex_padding.cpp
-    # PR 22: CHUNKDONE accepted only with the handshake/pinned key; reward gating
+    # CHUNKDONE accepted only with the handshake/pinned key; reward gating
     test_chunkdone_auth.cpp
-    # PR 23: CONTRIB / CONTRIBSNAP under the peer-auth rules
+    # CONTRIB / CONTRIBSNAP under the peer-auth rules
     test_contrib_auth.cpp
-    # PR 25: peer alias re-read per message line
+    # Peer alias re-read per message line
     test_alias_per_message.cpp
-    # PR 26: wallet signing paths (P2PKH, BIP-143 P2WPKH, PSBT finalize)
+    # Wallet signing paths (P2PKH, BIP-143 P2WPKH, PSBT finalize)
     test_wallet_signing_paths.cpp
-    # PR 27: idempotent rehydration; keep the range when a claim fails
+    # Idempotent rehydration; keep the range when a claim fails
     test_autocontinue_rehydrate.cpp
-    # PR 29: wallet RPC/address/sweep fixes; opt-in regtest suite ([.regtest])
+    # Wallet RPC/address/sweep fixes; opt-in regtest suite ([.regtest])
     test_wallet_rpc_paths.cpp
     test_regtest_wallet.cpp
-    # PR 30: idle claim retry auto-continues an exhausted range
+    # Idle claim retry auto-continues an exhausted range
     test_retry_autocontinue.cpp
-    # PR 31: strict reward-address validation
+    # Strict reward-address validation
     test_address_validation.cpp
-    # PR 33: owner-only key files; found keys never logged
+    # Owner-only key files; found keys never logged
     test_secret_files.cpp
-    # PR 37: MPC payout path sends the PAYOUT notification
+    # MPC payout path sends the PAYOUT notification
     test_mpc_payout_notify.cpp
-    # PR 34: reclaim chunks left behind by auto-continue
+    # Reclaim chunks left behind by auto-continue
     test_left_behind.cpp
-    # PR 36: --reward error printed once; --network CLI override
+    # --reward error printed once; --network CLI override
     test_cli_network.cpp
-    # PR 42: lease on approved claims (stalled holders lose them)
+    # Lease on approved claims (stalled holders lose them)
     test_claim_lease.cpp
-    # PR 38: no logger debug noise on stderr
+    # No logger debug noise on stderr
     test_logger_quiet.cpp
-    # PR 39: config.json is 0600
+    # config.json is 0600
     test_config_permissions.cpp
-    # PR 41: one PAYOUT per payout; the finishing node shows its own event
+    # One PAYOUT per payout; the finishing node shows its own event
     test_payout_dedupe.cpp
-    # PR 43: psbt_id is a hash of the whole PSBT
+    # psbt_id is a hash of the whole PSBT
     test_psbt_id.cpp
-    # PR 44: MPC signs with the found key, never the RPC password
+    # MPC signs with the found key, never the RPC password
     test_mpc_signing_key.cpp
-    # PR 46: MPC payouts off by default; the finder pays out directly
+    # MPC payouts off by default; the finder pays out directly
     test_mpc_default_off.cpp
-    # PR 47: direct payout retries with backoff and resumes after a restart
+    # Direct payout retries with backoff and resumes after a restart
     test_payout_retry.cpp
     test_logger_callbacks.cpp
-    # PR 53: standalone engine advances to the next puzzle not solved here
+    # Standalone engine advances to the next puzzle not solved here
     test_engine_next_puzzle.cpp
-    # PR 54: engine target/range switch is synchronized
+    # Engine target/range switch is synchronized
     test_engine_target_swap.cpp
     test_p2p_engine_targets.cpp
-    # PR 80: peers cannot switch the puzzle; only verified solves do
+    # Peers cannot switch the puzzle; only verified solves do
     test_puzzle_switch_trust.cpp
     test_chainstore_restart.cpp
     test_block_sync.cpp
     test_node_api.cpp
     support/TestIsolation.cpp
-    # PR 55: standalone engine skips puzzles solved here at startup
+    # Standalone engine skips puzzles solved here at startup
     test_engine_startup_skip.cpp
-    # PR 58: stall-aware wall-clock bounds in tests
+    # Stall-aware wall-clock bounds in tests
     test_stall_aware_timer.cpp
-    # PR 61: ResourceMonitor::stop() wakes the monitor thread at once
+    # ResourceMonitor::stop() wakes the monitor thread at once
     test_resource_monitor_stop.cpp
-    # PR 62: ContributionSigner / wire::splitFields extracted from NetworkManager
+    # ContributionSigner / wire::splitFields extracted from NetworkManager
     test_contribution_signer.cpp
-    # PR 63: chunk-claim verb payload codec
+    # Chunk-claim verb payload codec
     test_claim_wire_codec.cpp
-    # PR 64: chunk-claim types/helpers/state in ChunkClaimBook
+    # Chunk-claim types/helpers/state in ChunkClaimBook
     test_chunk_claim_book.cpp
-    # PR 65: claim decisions in ClaimBook
+    # Claim decisions in ClaimBook
     test_claim_book_votes.cpp
-    # PR 66: claim expiry/leases/peer loss in ClaimBook
+    # Claim expiry/leases/peer loss in ClaimBook
     test_claim_book_expiry.cpp
-    # PR 67: claim throttle / isClaimedBy in ClaimBook
+    # Claim throttle / isClaimedBy in ClaimBook
     test_claim_book_throttle.cpp
-    # PR 69: peer-message verb dispatch table
+    # Peer-message verb dispatch table
     test_verb_routes.cpp
 )
 
 if(GUI_AVAILABLE)
     list(APPEND TEST_SOURCES test_gui_telemetry.cpp test_gui_log_thread.cpp
-        test_gui_close_shutdown.cpp)  # PR 56
+        test_gui_close_shutdown.cpp)
     message(STATUS "Including GUI telemetry test (requires Qt)")
 endif()
 
@@ -235,7 +235,7 @@ if(TARGET NetworkLayer)
     target_link_libraries(bitcrack_tests PRIVATE NetworkLayer)
 endif()
 
-# PR 36: the CLI test runs the real executable.
+# The CLI test runs the real executable.
 # (bitcrack-distributed is defined after add_subdirectory(tests); both
 # references below are resolved at generate time.)
 add_dependencies(bitcrack_tests bitcrack-distributed)

@@ -27,7 +27,7 @@ TEST_CASE("Telemetry label not blank when engine running", "[gui][telemetry]") {
     cfg.gpu.enable_cuda = false;
     cfg.gpu.enable_opencl = false;
     cfg.network.enable_p2p = false; // Isolate engine
-    // PR 52: a valid reward address. Without one MainWindow opens its modal
+    // A valid reward address. Without one MainWindow opens its modal
     // "Reward Address Required" prompt (QInputDialog::exec) from the first
     // event-loop turn, and processEvents() below never returned: the hang.
     cfg.reward_address = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
@@ -49,7 +49,7 @@ TEST_CASE("Telemetry label not blank when engine running", "[gui][telemetry]") {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
-    // PR 52: the dashboard panes replaced the old "keysLabel" and
+    // The dashboard panes replaced the old "keysLabel" and
     // "recentChunkPill" widgets; the test now reads the panes.
     QLabel* label = window.findChild<QLabel*>(QStringLiteral("telemetryPaneText"));
     REQUIRE(label != nullptr);

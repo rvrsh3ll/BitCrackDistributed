@@ -57,10 +57,10 @@ public:
     void setGenesisBlock(const Block& genesis);
     bool addBlock(const Block& block, std::string* error_message = nullptr);
     bool addKeyspaceBlock(const KeyspaceBlock& keyspace_block, std::string* error_message = nullptr);
-    // PR 82: the Block addKeyspaceBlock would add (validated, nonce mined).
+    // The Block addKeyspaceBlock would add (validated, nonce mined).
     static bool blockFromKeyspace(const KeyspaceBlock& keyspace_block, Block& out,
                                   std::string* error_message = nullptr);
-    // PR 82: best-chain locator (tip first, exponentially sparser, genesis last).
+    // Best-chain locator (tip first, exponentially sparser, genesis last).
     std::vector<std::string> getLocator() const;
     std::optional<Block> getBlock(const std::string& hash) const;
     std::vector<BlockHeader> getHeadersFrom(const std::vector<std::string>& locator_hashes,

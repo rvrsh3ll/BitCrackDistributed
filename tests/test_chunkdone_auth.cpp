@@ -1,4 +1,4 @@
-// PR 22: CHUNKDONE is accepted only with the sender's handshake key or the
+// CHUNKDONE is accepted only with the sender's handshake key or the
 // pinned key of the alias it names; completions whose key is unknown count
 // for scheduling but get no reward (peer-auth proposal, step 4).
 //

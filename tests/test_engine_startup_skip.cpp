@@ -1,7 +1,7 @@
-// PR 55: a standalone engine that starts on a puzzle this node already
+// A standalone engine that starts on a puzzle this node already
 // solved (per its found-key files) moves to the next unsolved defined puzzle
 // in order, using the PuzzleManager helpers (as NetworkManager does at
-// startup, PR 48); with none left it stays idle instead of searching the
+// startup); with none left it stays idle instead of searching the
 // solved range again.
 #include <catch2/catch_test_macros.hpp>
 

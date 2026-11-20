@@ -1,10 +1,10 @@
-// PR 21: EC key material and point coordinates are encoded fixed-width.
+// EC key material and point coordinates are encoded fixed-width.
 //
 // EllipticCurve::bnToHex only padded to an even length, so about 1 in 256
 // private keys (from generateKeyPair) and point coordinates came out 62 hex
 // or shorter. pointToHex then produced 64-hex "compressed" pubkeys that
 // hexToPoint (exactly 66 / 130 hex) cannot parse, so signatures by such keys
-// never verified, node key generation failed (PR 18: no node_key.json) or a
+// never verified, node key generation failed (no node_key.json) or a
 // stored 62-hex private key was rejected on load, and the wallet put a
 // 31-byte x into transaction pubkeys.
 #include <catch2/catch_test_macros.hpp>

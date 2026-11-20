@@ -1,4 +1,4 @@
-// PR 29: offline tests for the wallet bugs found by sweeping on a real
+// Offline tests for the wallet bugs found by sweeping on a real
 // Bitcoin Core regtest node (see test_regtest_wallet.cpp and
 // scripts/regtest_wallet_test.sh). A fake HTTP JSON-RPC server stands in for
 // bitcoind, so these run in the default suite.
@@ -144,7 +144,7 @@ struct FakeRpcServer {
     std::vector<std::string> raw() { std::lock_guard<std::mutex> lk(m); return requests; }
 };
 
-// Key 1 from the PR 26 tests (and its compressed P2PKH address / script).
+// Key 1 from the signing tests (and its compressed P2PKH address / script).
 const std::string kKey1 = "0000000000000000000000000000000000000000000000000000000000000001";
 const std::string kKey1Addr = "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH";
 const std::string kFundTxid = "a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00";
@@ -392,7 +392,7 @@ TEST_CASE("PR29: buildRawTransaction rejects invalid and dust outputs and drops 
     // An unparsable address used to become an empty, anyone-can-spend script.
     CHECK(w.buildRawTransaction(utxos, {{"bc1qinvalid", 50000, 0.5, "x"}}, spk, 1000).empty());
     CHECK(w.buildRawTransaction(utxos, {{"1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN3", 50000, 0.5, "x"}}, spk, 1000).empty());
-    // 545 sats to P2PKH is dust; 294 to P2WPKH is not. PR 32: a dust output
+    // 545 sats to P2PKH is dust; 294 to P2WPKH is not. A dust output
     // is dropped (its sats go to the change) instead of failing the tx.
     const ParsedTx d = parseTx(w.buildRawTransaction(utxos, {{"1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2", 545, 0.5, "x"}}, spk, 1000));
     REQUIRE(d.outs.size() == 1);
@@ -469,7 +469,7 @@ TEST_CASE("PR29: waitForConfirmations reads confirmations from the node", "[pr29
         return httpReply(404, "");
     });
     BitcoinWallet w(srv.url(), "u", "p");
-    stall_aware::StallAwareTimer timer("waitForConfirmations");  // PR 58
+    stall_aware::StallAwareTimer timer("waitForConfirmations");
     CHECK(w.waitForConfirmations("0100deadbeef", 2, 10));  // the old code slept and timed out
     timer.stop();
     CHECK(timer.effective() < stall_aware::scaledLimit(std::chrono::seconds(3)));
@@ -480,7 +480,7 @@ TEST_CASE("PR29: waitForConfirmations reads confirmations from the node", "[pr29
 
 #endif  // !_WIN32
 
-// PR 32: dust payees and post-fee amounts.
+// Dust payees and post-fee amounts.
 namespace {
 struct CapturedLogs {
     std::vector<std::string> lines;
@@ -547,10 +547,10 @@ TEST_CASE("PR32: a dust payee is merged into the largest output and the post-fee
     CHECK(logs.has("dropping dust output of", "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"));
     CHECK(logs.has("merged into the largest output (3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy)"));
     CHECK(logs.has("Payout after a fee of"));
-    // PR 35: the fee is for the two outputs that are left, not the three asked for.
+    // The fee is for the two outputs that are left, not the three asked for.
     AddressGenerator g;
     const auto in_spk = g.addressToScriptPubKey(kKey1Addr);
-    CHECK(fee == BitcoinWallet::estimatePayoutFee(1, in_spk, 2, false));  // PR 40: sweep, no change
+    CHECK(fee == BitcoinWallet::estimatePayoutFee(1, in_spk, 2, false));  // Sweep, no change
     CHECK(fee < BitcoinWallet::estimatePayoutFee(1, in_spk, 3, true));
     CHECK(logs.has("fee recomputed for 2 output(s)"));
 }

@@ -1,4 +1,4 @@
-// PR 65: chunk-claim decisions (propose, vote, tally, buffered-vote replay,
+// Chunk-claim decisions (propose, vote, tally, buffered-vote replay,
 // leases) in chunk_claim::ClaimBook, tested without a NetworkManager. The
 // logic was moved unchanged; these pin its current rules.
 #include <catch2/catch_test_macros.hpp>
@@ -61,7 +61,7 @@ TEST_CASE("PR65: a claim that can no longer reach a majority is rejected at once
     QuietLogs quiet;
     cc::ClaimBook book;
     REQUIRE(book.evaluateProposal("c1", "10", "1F", kZ, voters(2), kMe).should_approve);
-    auto o = book.recordVote("c1", kZ, kMe, "REJECT", voters(2), kMe);  // 2 nodes: one REJECT decides (PR 10)
+    auto o = book.recordVote("c1", kZ, kMe, "REJECT", voters(2), kMe);  // 2 nodes: one REJECT decides
     CHECK(o.finalized);
     CHECK_FALSE(o.approved);
     CHECK(book.rejected.count(cc::claimKey("c1", kZ)) == 1);

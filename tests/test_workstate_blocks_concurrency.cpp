@@ -1,7 +1,7 @@
-// PR 15: WorkState::blocks() is read under the lock.
+// WorkState::blocks() is read under the lock.
 //
 // blocks() returned a reference to the vector that recordKeyspaceBlock()
-// appends to (under WorkState's mutex since PR 13). A reader iterating that
+// appends to (under WorkState's mutex). A reader iterating that
 // reference while a block was minted could see a reallocation in progress;
 // mintAndStoreKeyspaceBlock read blocks().back() unlocked. blocks() now
 // returns a copy, and blockCount()/lastBlock() are single locked reads.

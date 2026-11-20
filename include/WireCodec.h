@@ -1,7 +1,7 @@
 #pragma once
 // Shared helpers for the newline-delimited "VERB:payload" wire format.
 //
-// PR 62: moved out of NetworkManager unchanged; the bytes on the wire and
+// Moved out of NetworkManager unchanged; the bytes on the wire and
 // how they are parsed are the same as before.
 #include <string>
 #include <vector>
@@ -13,7 +13,7 @@ namespace wire {
 // verb parser relies on.
 std::vector<std::string> splitFields(const std::string& payload, char delimiter);
 
-// PR 63: chunk-claim verb payloads (moved out of NetworkManager unchanged).
+// Chunk-claim verb payloads (moved out of NetworkManager unchanged).
 //
 // CHUNKCLAIMPROPOSAL and CHUNKCLAIMAPPROVED carry "chunk_id|start|end|proposer".
 struct ClaimRange {

@@ -1,4 +1,4 @@
-// PR 54: engine targets (and the range) change while the search runs.
+// Engine targets (and the range) change while the search runs.
 //
 // The standalone work-depleted callback runs on a CPU worker and used to
 // rewrite target_addresses_/target_set_/binary_targets_ in place while other

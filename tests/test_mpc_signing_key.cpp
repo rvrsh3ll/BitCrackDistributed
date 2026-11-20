@@ -1,4 +1,4 @@
-// PR 44: MPC local signing (electrum backend) used config.bitcoin_rpc_password
+// MPC local signing (electrum backend) used config.bitcoin_rpc_password
 // as the private key. The payout spends the puzzle address, a single-key
 // output, so only the found puzzle key can sign it; only the finder holds it
 // and no key shares exist. A node signs only with the found key, and

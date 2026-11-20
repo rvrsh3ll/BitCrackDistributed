@@ -39,11 +39,11 @@ public:
                ResourceMonitor* resource_monitor,
                QWidget* parent = nullptr);
 
-    // Appends a line to the Logs tab. Callable from any thread (PR 51): off
+    // Appends a line to the Logs tab. Callable from any thread: off
     // the GUI thread the line is queued to it.
     void appendLogMessage(const QString& text);
 
-    // PR 56: closing the window stops the network, engine and resource
+    // Closing the window stops the network, engine and resource
     // monitor on a background thread owned by the window, so the GUI thread
     // never blocks on their thread joins. The components are owned by the
     // caller: it must call waitForShutdown() (the destructor does too) before
@@ -63,7 +63,7 @@ protected:
 
 private:
     void appendLogLine(const QString& line);  // GUI thread only
-    void finishClose();                       // GUI thread only (PR 56)
+    void finishClose();                       // GUI thread only
     void buildUi();
     QWidget* buildTopBar();
     QWidget* buildFooter();
@@ -137,7 +137,7 @@ private:
     QLabel* chunk_pane_text_ = nullptr;
     QLabel* network_pane_text_ = nullptr;
 
-    // PR 56: close-time shutdown (see waitForShutdown()).
+    // Close-time shutdown (see waitForShutdown()).
     std::thread shutdown_thread_;
     std::atomic<bool> shutdown_finished_{false};
     bool shutdown_started_ = false;  // GUI thread only

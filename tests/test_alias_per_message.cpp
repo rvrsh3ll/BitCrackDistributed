@@ -1,4 +1,4 @@
-// PR 25: the peer alias is re-read for every line of a received buffer.
+// The peer alias is re-read for every line of a received buffer.
 //
 // handlePeerMessageById read the connection's alias once per buffer. When a
 // HELLO earlier in the same buffer renamed the connection, later lines were

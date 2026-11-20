@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# PR 29: opt-in wallet test against a real Bitcoin Core node on REGTEST.
+# Opt-in wallet test against a real Bitcoin Core node on REGTEST.
 #
 # Starts a throwaway bitcoind -regtest (temporary datadir, loopback RPC
 # only, no P2P), runs the hidden "[regtest]" Catch2 tests, stops the node
 # and deletes the datadir. Regtest only: never mainnet, no real funds.
-# PR 46: includes an end-to-end find with the default config (MPC off):
+# Includes an end-to-end find with the default config (MPC off):
 # the finder signs and broadcasts the payout and it reaches the reward address.
 #
 # Usage: scripts/regtest_wallet_test.sh [path/to/bitcrack_tests] [extra Catch2 args]

@@ -4,7 +4,7 @@
 // with that alias (often the active one). Links churned, seed2/seed3 were
 // seen connected only through seed1, and once both links to a peer were gone
 // its approved, in-progress claim was released and re-claimed by another
-// seed. Also: PR 84's per-pass dial dedupe must not stop later redials.
+// seed. Also: the per-pass dial dedupe must not stop later redials.
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>

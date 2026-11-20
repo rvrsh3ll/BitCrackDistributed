@@ -1,4 +1,4 @@
-// PR 29: wallet signing against a real Bitcoin Core node on regtest.
+// Wallet signing against a real Bitcoin Core node on regtest.
 //
 // Opt-in: the tests are hidden ("[.regtest]") and skip unless
 // BITCRACK_REGTEST_RPC_URL is set; scripts/regtest_wallet_test.sh starts a
@@ -13,10 +13,10 @@
 //   RPC     createPayoutPsbt -> signPsbt -> combinePartialSignatures -> finalizePsbt
 // Each sweep must pass testmempoolaccept, be broadcast and be mined.
 //
-// PR 46: a find with the default settings (enable_mpc off) is paid out
+// A find with the default settings (enable_mpc off) is paid out
 // end to end by NetworkManager::onKeyFound: signed with the found key,
 // broadcast over RPC, mined, and the funds arrive at the reward address.
-// PR 47: with the node's RPC unreachable at find time the payout is retried
+// With the node's RPC unreachable at find time the payout is retried
 // (in the same run, and after a restart from the found-key file) once RPC
 // is back, and the funds still arrive.
 #include <catch2/catch_test_macros.hpp>
@@ -303,7 +303,7 @@ TEST_CASE("PR29 regtest: RPC-backed PSBT path sweeps P2PKH and P2WPKH", "[.regte
     Logger::initialize(Logger::Level::Info);
 }
 
-// PR 32: P2PK inputs, dust payees and post-fee payout amounts, on a real node.
+// P2PK inputs, dust payees and post-fee payout amounts, on a real node.
 
 TEST_CASE("PR32 regtest: a P2PK coin is finalized locally with a <sig>-only scriptSig and accepted", "[.regtest][pr32]") {
     REGTEST_OR_SKIP(rt);
@@ -434,7 +434,7 @@ TEST_CASE("PR35 regtest: after dropping dust the fee is recomputed for the outpu
         uint64_t out_sum = 0;
         for (const auto& o : dec["vout"]) out_sum += static_cast<uint64_t>(std::llround(o["value"].get<double>() * 1e8));
         const uint64_t fee = balance - out_sum;
-        CHECK(fee == BitcoinWallet::estimatePayoutFee(1, in_spk, 2, false));  // PR 40: a sweep has no change
+        CHECK(fee == BitcoinWallet::estimatePayoutFee(1, in_spk, 2, false));  // A sweep has no change
         CHECK(fee < BitcoinWallet::estimatePayoutFee(1, in_spk, 4, true));  // what it used to pay
         REQUIRE(paid.size() == 2);
 
@@ -474,7 +474,7 @@ TEST_CASE("PR37 regtest: the payout outputs we decode from a finalized tx match 
             std::vector<BitcoinWallet::TxOutput> mine;
             REQUIRE(BitcoinWallet::decodeTxOutputs(tx, mine));
             const json dec = rt->acceptAndMine(tx);
-            CHECK(BitcoinWallet::txidOf(tx) == dec["txid"].get<std::string>());  // PR 41 (P2PKH and P2WPKH spends)
+            CHECK(BitcoinWallet::txidOf(tx) == dec["txid"].get<std::string>());  // P2PKH and P2WPKH spends
             REQUIRE(dec["vout"].size() == mine.size());
             CHECK(mine.size() == (sweep ? 4u : 5u));
             for (size_t i = 0; i < mine.size(); ++i) {

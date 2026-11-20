@@ -1,4 +1,4 @@
-// PR 66: claim expiry, leases and peer loss in chunk_claim::ClaimBook,
+// Claim expiry, leases and peer loss in chunk_claim::ClaimBook,
 // tested without a NetworkManager and with an injected clock. The logic was
 // moved unchanged; these pin its current rules.
 #include <catch2/catch_test_macros.hpp>

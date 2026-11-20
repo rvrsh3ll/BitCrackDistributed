@@ -18,7 +18,7 @@ Logger::Level Logger::current_level_ = Logger::Level::Info;
 // Legacy single-callback kept for compatibility
 Logger::LogCallback Logger::log_callback_ = nullptr;
 
-// Callback registry. PR 49: callbacks are invoked WITHOUT s_logger_mutex held,
+// Callback registry. Callbacks are invoked WITHOUT s_logger_mutex held,
 // so a callback that takes its own lock (or logs) can never form a lock-order
 // cycle with a thread that logs while holding that lock. Each registered
 // callback counts its in-flight invocations; removeLogCallback() waits until
@@ -107,7 +107,7 @@ static void rotateFiles() {
         }
         // Reopen stream
         s_file_stream.open(s_file_path, std::ios::out | std::ios::app);
-        secret_file::restrictToOwner(s_file_path.string());  // PR 33: owner-only
+        secret_file::restrictToOwner(s_file_path.string());  // Owner-only
     } catch (const std::exception& e) {
         // On rotation failure, disable file logging
         s_file_enabled = false;
@@ -116,7 +116,7 @@ static void rotateFiles() {
     }
 }
 
-// PR 38: no per-line debug output on stderr (it printed "fileSink invoked",
+// No per-line debug output on stderr (it printed "fileSink invoked",
 // sizes and rotation steps for every log line). Only real failures are
 // reported there.
 static void fileSink(const std::string& formatted) {
@@ -130,7 +130,7 @@ static void fileSink(const std::string& formatted) {
                 fs::create_directories(p.parent_path());
             }
             s_file_stream.open(s_file_path, std::ios::out | std::ios::app);
-            secret_file::restrictToOwner(s_file_path.string());  // PR 33: owner-only
+            secret_file::restrictToOwner(s_file_path.string());  // Owner-only
             if (!s_file_stream.is_open()) throw std::runtime_error("failed to open log file");
         }
         s_file_stream << formatted << std::endl;
@@ -151,7 +151,7 @@ static void fileSink(const std::string& formatted) {
             rotateFiles();
         }
     } catch (const std::exception& e) {
-        // PR 38: lk already holds s_file_mutex here; locking it again (as
+        // Lk already holds s_file_mutex here; locking it again (as
         // this did) deadlocks.
         s_file_enabled = false;
         if (s_file_stream.is_open()) s_file_stream.close();
@@ -181,21 +181,21 @@ bool Logger::enableFileOutput(const std::string& file_path, uint32_t max_file_si
     // Try to open the file immediately to ensure it's writable
     try {
         std::lock_guard<std::mutex> lk2(s_file_mutex);
-        // PR 49: the file sink runs without s_logger_mutex, so its settings
+        // The file sink runs without s_logger_mutex, so its settings
         // are written under s_file_mutex, which it holds.
         s_file_path = path;
         s_file_max_bytes = static_cast<uint64_t>(max_file_size_mb) * 1024ull * 1024ull;
         s_file_max_count = std::max<uint32_t>(1, max_file_count);
         if (s_file_stream.is_open()) s_file_stream.close();
         s_file_stream.open(s_file_path, std::ios::out | std::ios::app);
-        secret_file::restrictToOwner(s_file_path.string());  // PR 33: owner-only
+        secret_file::restrictToOwner(s_file_path.string());  // Owner-only
         if (!s_file_stream.is_open()) {
             std::cerr << "enableFileOutput: failed to open file " << s_file_path.string() << std::endl;
             s_file_enabled = false;
             return false;
         }
         s_file_enabled = true;
-        // PR 33: older versions logged found keys, so narrow rotated files too.
+        // Older versions logged found keys, so narrow rotated files too.
         for (uint32_t i = 0; i <= s_file_max_count; ++i)
             secret_file::restrictToOwner(s_file_path.string() + "." + std::to_string(i));
     } catch (const std::exception& e) {
@@ -274,7 +274,7 @@ void Logger::log(Level level, const std::string& msg) {
         }
     }
 
-    // Registered callbacks, invoked without s_logger_mutex held (PR 49).
+    // Registered callbacks, invoked without s_logger_mutex held.
     std::vector<std::shared_ptr<CallbackEntry>> callbacks;
     {
         std::lock_guard<std::mutex> lk(s_logger_mutex);

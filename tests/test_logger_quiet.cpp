@@ -1,4 +1,4 @@
-// PR 38: the file sink no longer writes debug lines ("fileSink invoked",
+// The file sink no longer writes debug lines ("fileSink invoked",
 // sizes, rotation steps, "fileSink: disabled") to stderr for every log line,
 // with file logging on, during rotation, or after it is disabled.
 #include <catch2/catch_test_macros.hpp>

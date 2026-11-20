@@ -1,7 +1,7 @@
-// PR 16: a lost peer's claim state goes with it.
+// A lost peer's claim state goes with it.
 //
 // When a peer disconnected, its claimed chunks and coordinator reservations
-// were released (PR 12) but peer_claimed_count_ and peer_pending_count_ were
+// were released but peer_claimed_count_ and peer_pending_count_ were
 // not, nor its pending proposals. A peer that came back with two claims on
 // record was rejected and struck as "too many active chunks" for claims no
 // one tracked any more. Cleanup now also clears those, and runs only when the

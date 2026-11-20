@@ -1,5 +1,5 @@
 #pragma once
-// PR 33: files that hold a private key (or WIF) are owner-only (0600 on
+// Files that hold a private key (or WIF) are owner-only (0600 on
 // POSIX; on Windows a protected DACL granting only the current user, SYSTEM
 // and Administrators - the equivalent of 0600 where root keeps access).
 // Nothing in here logs the content it writes.
@@ -14,7 +14,7 @@ namespace secret_file {
 // existing file is narrowed to 0600 too. Returns false on any error.
 bool appendOwnerOnly(const std::string& path, const std::string& text);
 
-// PR 39: replaces the content of `path` (created or truncated), mode 0600.
+// Replaces the content of `path` (created or truncated), mode 0600.
 // An existing file is narrowed to 0600 before anything is written. Unlike
 // appendOwnerOnly a symlink is followed (a user may link their config).
 bool writeOwnerOnly(const std::string& path, const std::string& text);
@@ -32,13 +32,13 @@ std::string foundKeyLogPath(const std::string& dir, uint32_t puzzle_number);
 
 // Appends "solver=<addr> alias=<alias> key=<key> status=<status>" to the
 // puzzle's found-key log (0600). An empty dir means the current directory.
-// PR 47: `extra` ("k=v k=v", no spaces inside a value) is appended to the
+// `extra` ("k=v k=v", no spaces inside a value) is appended to the
 // line; the direct payout journals its target address and signed tx there.
 bool writeFoundKeyRecord(const std::string& dir, uint32_t puzzle_number, const std::string& solver_address,
                          const std::string& alias, const std::string& private_key, const std::string& status,
                          const std::string& extra = std::string());
 
-// PR 47: the payout state of one found-key file. Fields are merged over
+// The payout state of one found-key file. Fields are merged over
 // every parsable line (later lines win), so `status` is the latest status
 // and e.g. `tx` survives a later line without it. Lines that are not
 // "k=v ..." records with key= and status= are skipped.

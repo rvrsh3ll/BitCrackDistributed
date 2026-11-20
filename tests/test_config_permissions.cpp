@@ -1,4 +1,4 @@
-// PR 39: config.json is written owner-only (0600) and an existing file that
+// config.json is written owner-only (0600) and an existing file that
 // group/other can read is narrowed when it is loaded.
 #include <catch2/catch_test_macros.hpp>
 

@@ -1,4 +1,4 @@
-// PR 33: files holding a private key are owner-only (0600), older ones are
+// Files holding a private key are owner-only (0600), older ones are
 // tightened, and found keys never reach the logs.
 #include <catch2/catch_test_macros.hpp>
 

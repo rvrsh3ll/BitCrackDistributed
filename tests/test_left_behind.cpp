@@ -1,4 +1,4 @@
-// PR 34: when a node auto-continues out of a range, chunks other peers still
+// When a node auto-continues out of a range, chunks other peers still
 // hold there are tracked; if the holder drops or its claim expires, the
 // range is reclaimed instead of being lost.
 #include <catch2/catch_test_macros.hpp>
@@ -91,7 +91,7 @@ TEST_CASE("PR34: a dropped holder's chunks in the range we left are reclaimed", 
     f.approved("c1", k10, k1F, "peerC");
     f.approved("b2", k20, k2F, "peerB");
     f.loop = TA::startClaimRetryLoop(*f.nm);
-    REQUIRE(f.advancedWithin(3000));  // nothing unassigned left: moved on (PR 30)
+    REQUIRE(f.advancedWithin(3000));  // nothing unassigned left: moved on
     TA::stopClaimRetryLoop(*f.nm, f.loop);
     CHECK(TA::leftBehindCount(*f.nm) == 3);
     CHECK(TA::orphanedCount(*f.nm) == 0);

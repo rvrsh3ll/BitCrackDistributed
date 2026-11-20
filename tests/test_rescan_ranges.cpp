@@ -1,7 +1,7 @@
 // C5: local re-search list (network.rescan_ranges_file).
 //
 // A fresh-clone node with 8 threads reported 114 chunks done that it had
-// only partly scanned (fixed in #91). Those completions are in the agreed
+// only partly scanned (since fixed). Those completions are in the agreed
 // chain and the ledgers, which stay as they are. Instead each seed may list
 // the ranges in a file: a listed range that no node outside
 // rescan_ignore_completions_from has completed is un-retired in that seed's

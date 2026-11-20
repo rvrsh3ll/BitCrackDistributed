@@ -1,6 +1,6 @@
 #pragma once
 
-// PR 83: minimal read-only HTTP/1.1 JSON API (GET /status, /peers, /chunks).
+// Minimal read-only HTTP/1.1 JSON API (GET /status, /peers, /chunks).
 // Plain sockets, one thread, one connection at a time, Connection: close.
 // Requests are capped at kMaxRequestBytes and kRequestTimeoutMs; anything
 // that is not a well-formed GET for a known path gets 400/404/405/408/431.

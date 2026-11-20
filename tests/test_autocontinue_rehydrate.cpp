@@ -1,4 +1,4 @@
-// PR 27: a failed claim after a completion no longer skips the rest of the
+// A failed claim after a completion no longer skips the rest of the
 // range, and reloading the work state never credits a completion twice.
 //
 // onWorkDepleted moved to the next range (autoContinueRange) whenever the

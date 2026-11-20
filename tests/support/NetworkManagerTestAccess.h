@@ -31,7 +31,7 @@ struct NetworkManagerTestAccess {
         return nm.work_coordinator_.peekNextStart();
     }
 
-    // PR 2: peer identity / per-peer thread lifecycle.
+    // Peer identity / per-peer thread lifecycle.
     // Sends a raw (possibly multi-line) message to every connected peer.
     static void broadcastRaw(NetworkManager& nm, const std::string& message) {
         nm.broadcastMessage(message);
@@ -51,19 +51,19 @@ struct NetworkManagerTestAccess {
         return nm.peer_handler_threads_.size();
     }
 
-    // PR 7: the non-coordinator assignment path shares the claim peer gate.
+    // The non-coordinator assignment path shares the claim peer gate.
     static bool assignLocalChunkNonCoordinator(NetworkManager& nm) {
         return nm.assignLocalChunkNonCoordinator();
     }
 
-    // PR 9: deliver a CHUNKCLAIMAPPROVED as a peer handler thread would.
+    // Deliver a CHUNKCLAIMAPPROVED as a peer handler thread would.
     static void handleChunkClaimApproved(NetworkManager& nm,
                                          const std::string& peer_alias,
                                          const std::string& payload) {
         nm.handleChunkClaimApproved(peer_alias, payload);
     }
 
-    // PR 81: chainstore restart / block sync.
+    // Chainstore restart / block sync.
     static ConsensusEngine::ChainSnapshot chainSnapshot(const NetworkManager& nm) {
         return nm.consensus_engine_.getChainSnapshot();
     }
@@ -95,7 +95,7 @@ struct NetworkManagerTestAccess {
         return nm.chain_store_ ? nm.chain_store_->size() : 0;
     }
 
-    // PR 10: HELLO handshake gating and claim retry.
+    // HELLO handshake gating and claim retry.
     static std::unordered_map<std::string, int> peerStrikes(const NetworkManager& nm) {
         std::lock_guard<std::mutex> lk(nm.misbehavior_mutex_);
         return nm.peer_strikes_;
@@ -139,7 +139,7 @@ struct NetworkManagerTestAccess {
         nm.claims_.last_claim_attempt = std::chrono::steady_clock::time_point{};
     }
 
-    // PR 12: chunk-claim conflicts by range.
+    // Chunk-claim conflicts by range.
     static void handleChunkClaimProposal(NetworkManager& nm, const std::string& peer_alias,
                                          const std::string& payload) {
         nm.handleChunkClaimProposal(peer_alias, payload);
@@ -166,7 +166,7 @@ struct NetworkManagerTestAccess {
         return nm.work_coordinator_.getChunkInfo(chunk_id, out);
     }
 
-    // PR 13: chunk-done by (peer, range).
+    // Chunk-done by (peer, range).
     static void handleChunkDone(NetworkManager& nm, const std::string& from, const std::string& payload) {
         nm.handleChunkDone(from, payload);
     }
@@ -191,7 +191,7 @@ struct NetworkManagerTestAccess {
         return nm.canonicalizeContribution(c) + "|" + c.signature_hex;
     }
 
-    // PR 22: a CHUNKDONE payload signed with an arbitrary key (not nm's).
+    // A CHUNKDONE payload signed with an arbitrary key (not nm's).
     static std::string chunkDoneSignedBy(NetworkManager& nm, const std::string& chunk_id, const std::string& start,
                                          const std::string& end, const std::string& peer, uint64_t keys,
                                          const std::string& priv_hex, const std::string& pub_hex) {
@@ -222,12 +222,11 @@ struct NetworkManagerTestAccess {
     }
 
     static WorkState& workState(NetworkManager& nm) { return *nm.work_state_; }
-    // PR 33
     static void onKeyFound(NetworkManager& nm, const std::string& key, const std::string& peer, const std::string& addr) {
         nm.onKeyFound(key, peer, addr);
     }
 
-    // PR 19: peer authentication.
+    // Peer authentication.
     // A connection whose HELLO arrived just now (so it is Pending, not yet
     // timed out to Legacy); fd is our end of a socketpair (or -1).
     static uint64_t addAuthPeer(NetworkManager& nm, const std::string& alias, int fd, bool hello_received = true) {
@@ -254,7 +253,7 @@ struct NetworkManagerTestAccess {
         nm.sendAuthChallengeLocked(*p);
         return p->auth_nonce;
     }
-    // PR 69: the verb table, as verb -> claim_traffic.
+    // The verb table, as verb -> claim_traffic.
     static std::map<std::string, bool> verbRouteTable() {
         std::map<std::string, bool> out;
         for (const auto& kv : NetworkManager::verbRoutes()) out[kv.first] = kv.second.claim_traffic;
@@ -282,7 +281,7 @@ struct NetworkManagerTestAccess {
         ConnectedPeer* p = nm.findPeerByIdLocked(peer_id);
         return p && p->socket != INVALID_SOCKET;
     }
-    // PR 62: the static helpers that now delegate to ContributionSigner / WireCodec.
+    // The static helpers that now delegate to ContributionSigner / WireCodec.
     static std::string doubleSha256Hex(const std::string& data) { return NetworkManager::doubleSha256Hex(data); }
     static std::vector<std::string> splitString(const std::string& payload, char delimiter) {
         return NetworkManager::splitString(payload, delimiter);
@@ -306,7 +305,7 @@ struct NetworkManagerTestAccess {
         return nm.acceptsClaimTrafficFrom(peer_id);
     }
 
-    // PR 18: the node's (persistent) signing public key.
+    // The node's (persistent) signing public key.
     static std::string nodePubkey(NetworkManager& nm) {
         nm.ensureContributionIdentity();
         std::lock_guard<std::mutex> lk(nm.contribution_mutex_);
@@ -341,12 +340,12 @@ struct NetworkManagerTestAccess {
         nm.auto_continue_enabled_ = on;
     }
 
-    // PR 16: drop one connection the way a dead socket is dropped.
+    // Drop one connection the way a dead socket is dropped.
     static bool removePeer(NetworkManager& nm, uint64_t peer_id, const std::string& reason) {
         return nm.removePeerById(peer_id, reason);
     }
 
-    // PR 14: a handshaken peer whose "socket" is the caller's end of a
+    // A handshaken peer whose "socket" is the caller's end of a
     // socketpair, so a test can read what the node broadcasts.
     static void addSocketPeer(NetworkManager& nm, const std::string& alias, int fd) {
         std::lock_guard<std::mutex> lk(nm.peers_mutex_);
@@ -380,7 +379,7 @@ struct NetworkManagerTestAccess {
         std::lock_guard<std::mutex> lk(nm.state_mutex_);
         return nm.last_range_start_;
     }
-    // PR 30: run the real idle claim retry loop on its own thread.
+    // Run the real idle claim retry loop on its own thread.
     static std::thread startClaimRetryLoop(NetworkManager& nm) {
         nm.running_ = true;
         return std::thread(&NetworkManager::claimRetryLoop, &nm);
@@ -391,9 +390,8 @@ struct NetworkManagerTestAccess {
         if (t.joinable()) t.join();
     }
 
-    // PR 34: left-behind chunks of a range we auto-continued out of.
+    // Left-behind chunks of a range we auto-continued out of.
     static void releaseLostPeer(NetworkManager& nm, const std::string& alias) { nm.releaseLostPeer(alias); }
-    // PR 42
     static size_t expireStalledClaims(NetworkManager& nm, std::chrono::seconds ahead) {
         return nm.expireStalledClaims(std::chrono::steady_clock::now() + ahead);
     }
@@ -416,8 +414,6 @@ struct NetworkManagerTestAccess {
                                      const std::string& e) {
         nm.noteHolderCompletion(holder, s, e);
     }
-    // PR 37
-    // PR 43
     static size_t mpcProposalCount(NetworkManager& nm) {
         std::lock_guard<std::mutex> lk(nm.mpc_mutex_);
         return nm.mpc_psbts_.size();
@@ -432,7 +428,7 @@ struct NetworkManagerTestAccess {
         auto it = nm.mpc_partial_sigs_.find(id);
         return it == nm.mpc_partial_sigs_.end() ? 0 : it->second.size();
     }
-    static bool announceMpcPayout(NetworkManager& nm, const std::string& tx_hex) {  // PR 41
+    static bool announceMpcPayout(NetworkManager& nm, const std::string& tx_hex) {
         return nm.announceMpcPayout(tx_hex);
     }
 
@@ -494,7 +490,7 @@ struct NetworkManagerTestAccess {
         nm.work_coordinator_.releaseAssignmentsForPeer(alias);
         nm.forgetClaimsOfPeer(alias);
     }
-    // PR 46: MPC off by default; direct payout by the finder.
+    // MPC off by default; direct payout by the finder.
     // Points the current puzzle at `address` (a key the test controls).
     static void setPuzzleTarget(NetworkManager& nm, const std::string& address) {
         PuzzleManager& pm = *nm.puzzle_manager_;
@@ -513,7 +509,7 @@ struct NetworkManagerTestAccess {
         std::lock_guard<std::mutex> lk(nm.mpc_mutex_);
         return !nm.mpc_signing_key_.empty();
     }
-    // PR 47: retried / resumed direct payouts.
+    // Retried / resumed direct payouts.
     static size_t runPendingPayoutsNow(NetworkManager& nm) { return nm.runPendingPayoutsNow(); }
     static size_t resumePendingPayouts(NetworkManager& nm) { return nm.resumePendingPayouts(); }
     static size_t pendingPayoutCount(NetworkManager& nm) {
@@ -538,7 +534,7 @@ struct NetworkManagerTestAccess {
         nm.payout_confirm_wait_ = wait;
         nm.payout_confirm_poll_ = poll;
     }
-    // PR 80: puzzle switches only on a verified solve.
+    // Puzzle switches only on a verified solve.
     static uint32_t currentPuzzle(const NetworkManager& nm) { return nm.puzzle_manager_->getCurrentPuzzleNumber(); }
     static std::string currentRangeStart(const NetworkManager& nm) {
         return nm.puzzle_manager_->getCurrentPuzzle().range_start;

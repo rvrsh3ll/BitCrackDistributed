@@ -9,7 +9,7 @@
 // Lightweight persisted view of completed keyspace (consensus-confirmed)
 // Stores window context and the completed chunks for the current puzzle.
 //
-// PR 13: a completion is identified by (peer, start, end), not by chunk id.
+// A completion is identified by (peer, start, end), not by chunk id.
 // Chunk ids are per-node counters that restart with the process, so the same
 // id names different ranges on different nodes (and across restarts). Old
 // files are still read: completions come from completed_details/recent, and
@@ -48,7 +48,7 @@ public:
                               const std::string& peer_id,
                               uint64_t keys_in_chunk = 0,
                               bool rewarded = true);
-    // PR 20: a completion recorded for scheduling only (rewarded=false) that
+    // A completion recorded for scheduling only (rewarded=false) that
     // is later delivered with a verified key gets its credit: flips the flag
     // and returns true. False if absent or already rewarded.
     bool markRewardedIfUnrewarded(const std::string& peer_id, const std::string& start_hex,
@@ -59,7 +59,7 @@ public:
 
     // Persist keyspace block headers and commitments (for independent-node ledger)
     void recordKeyspaceBlock(const KeyspaceBlock& block);
-    // Copy under the lock (PR 15): recordKeyspaceBlock may append concurrently,
+    // Copy under the lock: recordKeyspaceBlock may append concurrently,
     // so a returned reference could dangle or be read mid-reallocation.
     std::vector<KeyspaceBlock> blocks() const;
     size_t blockCount() const;
@@ -75,7 +75,7 @@ public:
 
     // Completions recorded (plus legacy ids that have no range on file).
     size_t completedCount() const;
-    // rewarded=false (PR 20): counted for scheduling but given no reward
+    // rewarded=false: counted for scheduling but given no reward
     // (unverified signing key); persisted as "unrewarded": true.
     struct ChunkEntry { std::string id, start, end, peer; uint64_t keys; bool rewarded = true; };
     // Copy: the list may grow concurrently.

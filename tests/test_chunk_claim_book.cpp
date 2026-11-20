@@ -1,4 +1,4 @@
-// PR 64: chunk-claim types, helpers and state moved to ChunkClaimBook.h
+// Chunk-claim types, helpers and state moved to ChunkClaimBook.h
 // without behaviour change.
 #include <catch2/catch_test_macros.hpp>
 

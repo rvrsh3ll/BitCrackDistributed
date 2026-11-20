@@ -1,4 +1,4 @@
-// PR 3: clean shutdown on SIGINT/SIGTERM and reward_address resolution
+// Clean shutdown on SIGINT/SIGTERM and reward_address resolution
 // (config.json vs --reward).
 #include <catch2/catch_test_macros.hpp>
 
@@ -164,7 +164,7 @@ TEST_CASE("ShutdownSignal: request() wakes waitFor()", "[shutdown][pr3]") {
         ShutdownSignal::request();
     });
     {
-        // PR 58: stall-free time, limit scaled for sanitizers; a real hang aborts.
+        // Stall-free time, limit scaled for sanitizers; a real hang aborts.
         stall_aware::StallAwareTimer timer("ShutdownSignal::waitFor");
         CHECK(ShutdownSignal::waitFor(std::chrono::seconds(10)));
         timer.stop();
@@ -248,7 +248,7 @@ TEST_CASE("ShutdownSignal: SIGINT/SIGTERM interrupt a blocked console read", "[s
             ::raise(sig); // first signal: latch only, no exit
         });
         std::string line;
-        stall_aware::StallAwareTimer timer("ShutdownSignal::readLine");  // PR 58
+        stall_aware::StallAwareTimer timer("ShutdownSignal::readLine");
         auto rr = ShutdownSignal::readLine(line);
         timer.stop();
         sender.join();

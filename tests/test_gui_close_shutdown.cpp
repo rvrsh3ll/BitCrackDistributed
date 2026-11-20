@@ -1,4 +1,4 @@
-// PR 56: closing the main window does not block the GUI thread on the
+// Closing the main window does not block the GUI thread on the
 // components' stop(), and the window's shutdown thread is always joined
 // before the components it uses are destroyed (no use-after-free at exit).
 //
@@ -89,7 +89,7 @@ struct SlowStop {
 long long msSince(Clock::time_point t) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t).count();
 }
-// PR 58: upper bounds use stall-free time (a box stall does not count, a
+// Upper bounds use stall-free time (a box stall does not count, a
 // real hang does and aborts). They stay unscaled: they tell "closed after
 // the timeout" from "closed after the 1.5-2 s stop".
 long long stallFreeMs(const stall_aware::StallAwareTimer& t) {

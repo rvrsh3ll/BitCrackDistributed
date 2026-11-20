@@ -1,4 +1,4 @@
-// PR 84: keeps the test binary off the real network. Before any test runs:
+// Keeps the test binary off the real network. Before any test runs:
 //  - the default bootstrap list is emptied, so a test's `Config cfg;` never
 //    names the public seeds;
 //  - every outbound P2P dial must go to loopback (127.0.0.0/8) or the

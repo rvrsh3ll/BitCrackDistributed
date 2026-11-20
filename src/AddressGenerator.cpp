@@ -230,7 +230,7 @@ std::string AddressGenerator::base58Encode(const std::vector<unsigned char>& inp
     }
 
     // Convert to base58 digits by repeated division (big-endian bytes).
-    // PR 31: the quotient's zero bytes were trimmed from the back (the least
+    // The quotient's zero bytes were trimmed from the back (the least
     // significant end), which divided the number by 256 whenever a quotient
     // ended in 0x00 and silently produced a wrong encoding (~10% of 25-byte
     // payloads). Leading zeros are now dropped from the front.
@@ -446,7 +446,7 @@ bool decodeSegwit(const std::string& in, DecodedAddress& out, std::string* error
 }
 }  // namespace
 
-// PR 29 decoder, factored out (PR 31) so validation and scriptPubKey
+// Address decoder, factored out so validation and scriptPubKey
 // building share it. P2PKH / P2SH (Base58Check, checksum verified) and
 // segwit v0..v16 (bech32/bech32m), for mainnet, testnet/signet and regtest.
 bool AddressGenerator::decodeAddress(const std::string& address, DecodedAddress& out, std::string* error) {
@@ -483,7 +483,7 @@ bool AddressGenerator::decodeAddress(const std::string& address, DecodedAddress&
     return true;
 }
 
-// Address -> scriptPubKey. PR 29: this used to turn every address into a
+// Address -> scriptPubKey. This used to turn every address into a
 // P2PKH script without checking the Base58 checksum. Network-agnostic (the
 // payee's network is checked by validateAddressForNetwork); empty if invalid.
 std::vector<unsigned char> AddressGenerator::addressToScriptPubKey(const std::string& address) {

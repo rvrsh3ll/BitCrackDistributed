@@ -1,7 +1,7 @@
 #pragma once
 // Signed contribution claims (CONTRIB / CHUNKDONE payloads).
 //
-// PR 62: the canonical form, digest, signing and verification moved out of
+// The canonical form, digest, signing and verification moved out of
 // NetworkManager unchanged (same bytes on the wire, same log lines). The
 // node key itself stays owned by NetworkManager; only a private key passed
 // in by the caller is used for signing, and it is never logged.

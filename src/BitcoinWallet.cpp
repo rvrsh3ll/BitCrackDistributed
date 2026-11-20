@@ -37,7 +37,7 @@ using json = nlohmann::json;
 static std::vector<unsigned char> hexToBytes(const std::string& hex);
 static std::string bytesToHex(const std::vector<unsigned char>& data);
 static std::string computeBip143SighashHex(const std::vector<unsigned char>& tx_bytes, size_t input_index, const std::vector<unsigned char>& scriptCode, uint64_t value, uint32_t sighash_type);
-// PR 26: a bounds-checked view of a non-witness transaction, and the legacy
+// A bounds-checked view of a non-witness transaction, and the legacy
 // SIGHASH_ALL digest computed from it.
 namespace {
 struct TxLayout {
@@ -53,7 +53,7 @@ static std::string computeLegacySighashHex(const std::vector<unsigned char>& tx,
                                            const std::vector<unsigned char>& scriptPubKey);
 static void writeVarInt(std::vector<unsigned char>& v, uint64_t n);
 
-// PR 29: helpers for the RPC transport, amounts and fees.
+// Helpers for the RPC transport, amounts and fees.
 namespace {
 constexpr int kRpcTimeoutMs = 30000;
 constexpr uint64_t kFeeRateSatPerVb = 50;
@@ -149,7 +149,7 @@ uint64_t dustThreshold(const std::vector<unsigned char>& spk) {
 
 // Conservative size estimate (vbytes) for spending n_in inputs of the given
 // script type into n_out outputs (sized as the largest standard output),
-// plus a change output only when there is one. PR 40: the change output was
+// plus a change output only when there is one. The change output was
 // always counted, so a sweep (no change) overpaid 43 vB x the fee rate.
 uint64_t estimateFee(size_t n_in, const std::vector<unsigned char>& in_spk, size_t n_out, bool with_change) {
     const uint64_t per_in = isP2wpkhScript(in_spk) ? 69 : 149;
@@ -179,14 +179,14 @@ bool takeFeeProRata(std::vector<PayoutOutput>& outs, uint64_t sum, uint64_t defi
 
 // Fits the outputs to the balance and the fee, which depends on how many
 // outputs there are (fee_for(n)). In a sweep the fee comes out of the
-// outputs. PR 32: outputs that would be dust are dropped with a log line;
+// outputs. Outputs that would be dust are dropped with a log line;
 // in a sweep their (pre-fee) sats are merged into the largest remaining
-// output, otherwise they stay with the change. PR 35: the fee is then
+// output, otherwise they stay with the change. The fee is then
 // recomputed for the outputs that are left (it used to keep the estimate for
 // the original count and overpay). Fails if the outputs exceed the balance,
 // cannot cover the fee, an address does not parse, or every output is dust.
 //
-// PR 40: fee_for(n, with_change) counts a change output only when there is
+// fee_for(n, with_change) counts a change output only when there is
 // one. With n outputs summing to `sum`:
 //   change: sum + fee_for(n, true) leaves change at or above change_dust;
 //           the fee is fee_for(n, true)
@@ -540,7 +540,7 @@ uint64_t BitcoinWallet::estimatePayoutFee(size_t n_in, const std::vector<unsigne
 }
 
 bool BitcoinWallet::isValidAddress(const std::string& address) const {
-    // PR 31: this was a shape check (1/3 + Base58 characters, or any string
+    // This was a shape check (1/3 + Base58 characters, or any string
     // starting with "bc1"/"tb1") with no checksum and no network check.
     return addressError(address).empty();
 }
@@ -577,7 +577,7 @@ bool BitcoinWallet::tryGetAddressBalance(const std::string& address, uint64_t& b
         return false;
     }
 
-    // PR 29: this always returned 0 over RPC, so the single-key payout saw
+    // This always returned 0 over RPC, so the single-key payout saw
     // an empty puzzle wallet and never paid out.
     std::vector<Utxo> utxos;
     if (!tryListUnspentUTXOs(address, utxos)) return false;
@@ -592,7 +592,7 @@ std::string BitcoinWallet::createPayoutTransaction(
     std::vector<PayoutOutput>* paid_outputs
 ) {
     if (paid_outputs) paid_outputs->clear();
-    // PR 29: this logged the private key in full, signed a placeholder over
+    // This logged the private key in full, signed a placeholder over
     // RPC, and could never sweep (the outputs carry the whole balance, so
     // outputs + fee always exceeded it). It now always builds and signs
     // locally from the puzzle address's UTXOs, whatever the backend, and the
@@ -633,7 +633,7 @@ std::string BitcoinWallet::createPayoutTransaction(
         Logger::error("createPayoutTransaction: signing failed");
         return signed_hex;
     }
-    // PR 32: report what the transaction actually pays (after the fee and
+    // Report what the transaction actually pays (after the fee and
     // any dust merging), not the pre-fee split.
     Logger::info("Payout after a fee of " + std::to_string(fee) + " sats:");
     for (const auto& o : fitted)
@@ -771,7 +771,7 @@ bool BitcoinWallet::waitForConfirmations(const std::string& tx_hex_or_id, int mi
     const int poll_interval_seconds = 5;
     const int max_iters = (timeout_seconds / poll_interval_seconds) > 1 ? (timeout_seconds / poll_interval_seconds) : 1;
 
-    // PR 29: with an RPC backend this only slept and always timed out, so a
+    // With an RPC backend this only slept and always timed out, so a
     // confirmed payout was never recognised. The output's confirmations come
     // from gettxout, which needs neither a wallet nor -txindex.
     std::string txid;
@@ -813,7 +813,7 @@ bool BitcoinWallet::waitForConfirmations(const std::string& tx_hex_or_id, int mi
 }
 
 std::string BitcoinWallet::rpcCall(const std::string& method, const std::string& params) {
-    // PR 29: only the method is logged; params can carry transactions.
+    // Only the method is logged; params can carry transactions.
     Logger::debug("RPC call: " + method);
     if (rpc_url_.empty()) {
         throw std::runtime_error("RPC URL not configured");
@@ -855,7 +855,7 @@ std::string BitcoinWallet::rpcCall(const std::string& method, const std::string&
         WINHTTP_DEFAULT_ACCEPT_TYPES, isHttps ? WINHTTP_FLAG_SECURE : 0);
     if (!hRequest) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); throw std::runtime_error("WinHttpOpenRequest failed"); }
 
-    // Basic auth header. PR 29: the old inline encoder used an unsigned bit
+    // Basic auth header. The old inline encoder used an unsigned bit
     // counter ("valb >= 0" is always true) and never terminated.
     std::string auth_header;
     if (!rpc_user_.empty()) {
@@ -906,7 +906,7 @@ std::string BitcoinWallet::rpcCall(const std::string& method, const std::string&
     WinHttpCloseHandle(hRequest); WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession);
     return rpcResultFromReply(static_cast<int>(http_status), response);
 #else
-    // PR 29: this was a stub that always threw, so no RPC-backed wallet path
+    // This was a stub that always threw, so no RPC-backed wallet path
     // (balance, UTXOs, PSBT, broadcast) worked off Windows.
     int http_status = 0;
     const std::string reply = posixHttpPost(rpc_url_, rpc_user_, rpc_password_, body, kRpcTimeoutMs, http_status);
@@ -921,8 +921,8 @@ std::string BitcoinWallet::buildRawTransaction(const std::vector<Utxo>& utxos, c
     uint64_t outputs_sum = 0; for (const auto& o : outputs) outputs_sum += o.amount_satoshis;
     if (outputs_sum + fee > total) { Logger::warn("Insufficient funds"); return std::string(); }
     uint64_t change = total - outputs_sum - fee;
-    // PR 29: an address that did not parse got an empty (anyone-can-spend)
-    // output script. PR 32: a dust output is dropped with a log line and its
+    // An address that did not parse got an empty (anyone-can-spend)
+    // output script. A dust output is dropped with a log line and its
     // sats go to the change (it used to fail the whole transaction).
     AddressGenerator out_gen;
     std::vector<PayoutOutput> kept;
@@ -985,7 +985,7 @@ std::string BitcoinWallet::createPayoutPsbt(const std::string& puzzle_address, c
         std::ostringstream oss; oss << "PSBT_" << puzzle_address.substr(0, 10); return oss.str();
     }
 
-    // PR 29: this funded the PSBT from any coin in the node wallet (inputs
+    // This funded the PSBT from any coin in the node wallet (inputs
     // were []), sent change to the node wallet, passed BTC amounts as doubles
     // (0.30000000000000004 is rejected) and fell back to a mock PSBT on
     // error. It now spends exactly the puzzle address's UTXOs, returns change
@@ -1006,7 +1006,7 @@ std::string BitcoinWallet::createPayoutPsbt(const std::string& puzzle_address, c
     uint64_t outputs_sum = 0; for (const auto& m : merged) outputs_sum += m.second;
     if (outputs_sum > total) { Logger::error("createPayoutPsbt: outputs exceed the puzzle balance"); return std::string(); }
     AddressGenerator gen;
-    // PR 40: a sweep has no change output, so test with the no-change fee
+    // A sweep has no change output, so test with the no-change fee
     // (Bitcoin Core sizes the real fee itself).
     const bool sweep =
         outputs_sum + estimateFee(utxos.size(), gen.addressToScriptPubKey(puzzle_address), merged.size(), false) > total;
@@ -1046,7 +1046,7 @@ std::string BitcoinWallet::createPayoutPsbtFromUtxos(const std::string& puzzle_a
     std::vector<Utxo> utxos = listUnspentUTXOs(puzzle_address);
     if (utxos.empty()) return std::string();
     uint64_t total = 0; for (const auto& u : utxos) total += u.value_satoshis;
-    // PR 29: the fee now comes out of the outputs when they carry the whole
+    // The fee now comes out of the outputs when they carry the whole
     // balance (it failed with "insufficient funds" before), and the fee
     // estimate accounts for the cheaper P2WPKH inputs.
     auto fee_for = [&](size_t n_out, bool with_change) {
@@ -1084,7 +1084,7 @@ bool BitcoinWallet::verifyPartialSignature(const std::string& base_psbt_hex, con
                 if (in.contains("partial_signatures") && !in["partial_signatures"].empty()) {
                     return true; // at least one partial signature exists
                 }
-                // PR 29: an input this signer already finalized is signed too.
+                // An input this signer already finalized is signed too.
                 if (in.contains("final_scriptwitness") || in.contains("final_scriptSig")) return true;
             }
         }
@@ -1104,7 +1104,7 @@ std::string BitcoinWallet::combinePartialSignatures(const std::vector<std::strin
         return combined;
     }
     try {
-        // combinepsbt takes ONE parameter, the array of PSBTs. PR 29: the
+        // combinepsbt takes ONE parameter, the array of PSBTs. The
         // bare array was sent as the params list (each PSBT a parameter), and
         // the result is a string, not an object with "psbt".
         json jparams = json::array();
@@ -1171,7 +1171,7 @@ std::string BitcoinWallet::finalizePsbtLocally(const std::string& psbt_json) {
                 v.push_back(static_cast<unsigned char>(d.size()));  // all pushes here are < 76 bytes
                 v.insert(v.end(), d.begin(), d.end());
             };
-            // PR 32: classify the input's scriptPubKey. Every non-P2WPKH input
+            // Classify the input's scriptPubKey. Every non-P2WPKH input
             // got a P2PKH-style scriptSig <sig> <pubkey>, which is invalid for
             // P2PK (and anything else), and the first partial signature was
             // used whoever made it.
@@ -1312,7 +1312,7 @@ std::string BitcoinWallet::finalizePsbtLocally(const std::string& psbt_json) {
                 }
             }
         }
-        // append locktime: the 4 bytes after the outputs (PR 26: this read
+        // append locktime: the 4 bytes after the outputs (this read
         // them at idx, i.e. from the first input)
         if (unsigned_tx_bytes.size() < outputs_end + 4) { Logger::warn("finalizePsbtLocally: truncated tx"); return std::string(); }
         for (int k=0;k<4;k++) final_tx.push_back(unsigned_tx_bytes[outputs_end + k]);
@@ -1407,7 +1407,7 @@ bool parseRawTx(const std::string& raw_tx_hex, std::vector<BitcoinWallet::TxOutp
         out.push_back(std::move(o));
     }
     io_end = pos;
-    // PR 41: the witness (one stack per input) and the locktime must follow
+    // The witness (one stack per input) and the locktime must follow
     // exactly, so a truncated or padded tx is rejected (and never yields a
     // wrong txid).
     if (segwit) {
@@ -1433,7 +1433,7 @@ std::string BitcoinWallet::finalizePsbt(const std::string& psbt_hex, const std::
         Logger::warn("RPC not configured, returning mock signed tx");
         return "SIGNED_TX_" + combined_sig.substr(0, 8);
     }
-    // PR 29: this always finalized psbt_hex, which callers pass as the
+    // This always finalized psbt_hex, which callers pass as the
     // unsigned base PSBT, ignoring the combined (signed) PSBT. A base64 PSBT
     // ("psbt\xff" -> "cHNidP") in combined_sig is now the one finalized.
     const std::string& to_finalize = combined_sig.rfind("cHNidP", 0) == 0 ? combined_sig : psbt_hex;
@@ -1458,7 +1458,7 @@ std::string BitcoinWallet::signPsbt(const std::string& psbt_hex) {
         return "PARTIAL_" + psbt_hex.substr(0, 10);
     }
     try {
-        // sign = true, SIGHASH ALL, finalize = false. PR 29: finalize used to
+        // sign = true, SIGHASH ALL, finalize = false. Finalize used to
         // default to true, which drops the partial signatures (other signers
         // and verifyPartialSignature need them); finalizePsbt finalizes.
         auto parsed = json::parse(rpcCall("walletprocesspsbt", json::array({psbt_hex, true, "ALL", false}).dump()));
@@ -1476,7 +1476,7 @@ std::string BitcoinWallet::signPsbtLocally(const std::string& psbt_json, const s
         if (!psbt.contains("tx_hex")) return std::string();
         std::string tx_hex = psbt["tx_hex"].get<std::string>();
         auto inputs = psbt["inputs"];
-        // PR 44: sign only with a real private key (64 hex digits, 1..n-1),
+        // Sign only with a real private key (64 hex digits, 1..n-1),
         // and only the inputs it controls (P2PKH / P2WPKH of its compressed
         // key, or P2PK of it); other inputs are left for their own signers.
         // A key that controls none is refused. Anything else, such as a
@@ -1526,12 +1526,12 @@ std::string BitcoinWallet::signPsbtLocally(const std::string& psbt_json, const s
         }
         // For each input, compute sighash and create DER+SIGHASH
         for (size_t i=0;i<inputs.size(); ++i) {
-            if (!owned[i]) continue;  // PR 44: another key's input
+            if (!owned[i]) continue;  // Another key's input
             auto in = inputs[i];
             std::string script_hex = in.value("scriptPubKey", std::string());
             std::vector<unsigned char> script = hexToBytes(script_hex);
             Utxo u; u.txid = in.value("txid", std::string()); u.vout = in.value("vout", 0); u.value_satoshis = in.value("value", 0);
-            // PR 26: this used to run signRawTransaction on the whole tx with
+            // This used to run signRawTransaction on the whole tx with
             // just this input's UTXO (and discard the result), which failed
             // for any PSBT with more than one input.
             EllipticCurve ec; auto pubp = ec.multiplyByG(private_key_hex); std::string pubkey_hex = ec.pointToHex(pubp, true);
@@ -1550,7 +1550,7 @@ std::string BitcoinWallet::signPsbtLocally(const std::string& psbt_json, const s
                     if (sighash_hex.empty()) return std::string();
                     sig_hex = ec.signDigestHex(private_key_hex, sighash_hex);
                 } else {
-                    // PR 26: the legacy SIGHASH_ALL digest (this hashed the
+                    // The legacy SIGHASH_ALL digest (this hashed the
                     // whole unsigned tx, which no node accepts).
                     const std::string digest_hex = computeLegacySighashHex(tx_bytes, i, script);
                     if (digest_hex.empty()) return std::string();
@@ -1699,7 +1699,7 @@ bool BitcoinWallet::tryListUnspentUTXOs(const std::string& address, std::vector<
     auto electrum = electrumClient();
     if (bitcoin_backend_ == "electrum" && electrum && electrum->isConnected()) {
         auto res = electrum->listUnspentForAddress(address);
-        if (!res.is_array()) return false;  // PR 47: null = the call failed
+        if (!res.is_array()) return false;  // Null = the call failed
         for (const auto& u : res) {
             Utxo ut; ut.txid = u.value("tx_hash", std::string()); ut.vout = u.value("tx_pos", 0);
             ut.value_satoshis = u.value("value", 0);
@@ -1721,7 +1721,7 @@ bool BitcoinWallet::tryListUnspentUTXOs(const std::string& address, std::vector<
         Logger::debug(std::string("listunspent failed: ") + e.what());
     }
     if (!out.empty()) return true;
-    // PR 29: listunspent only sees the node wallet's own coins, and a
+    // Listunspent only sees the node wallet's own coins, and a
     // puzzle address normally is not in it; scan the UTXO set (confirmed
     // coins only) instead.
     try {
@@ -1825,10 +1825,10 @@ static std::string computeLegacySighashHex(const std::vector<unsigned char>& tx,
 }
 
 std::string BitcoinWallet::signRawTransaction(const std::string& raw_tx_hex, const std::vector<Utxo>& utxos, const std::vector<unsigned char>& scriptPubKey, const std::string& private_key_hex) {
-    // PR 26: rewritten on parseLegacyTx. The old version read the inputs from
+    // Rewritten on parseLegacyTx. The old version read the inputs from
     // byte 4 (the input count, not the first input), so every prevout,
     // sequence and signature digest it produced was wrong.
-    // PR 29: also signs native P2WPKH (BIP-143, witness serialization; it
+    // Also signs native P2WPKH (BIP-143, witness serialization; it
     // produced a P2PKH scriptSig before, which the node rejects), and refuses
     // a key that does not own the script being spent.
     if (utxos.empty()) return std::string();

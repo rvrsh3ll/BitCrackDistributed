@@ -1,4 +1,4 @@
-// PR 80: a peer can no longer switch a node's puzzle. PUZZLEADV used to move
+// A peer can no longer switch a node's puzzle. PUZZLEADV used to move
 // a node to any puzzle number, PAYOUT stopped its search and marked its
 // puzzle solved, and STATE re-pointed its scheduler at any range/target, all
 // from one unauthenticated line. Now the node leaves a puzzle only when it is

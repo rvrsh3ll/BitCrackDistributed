@@ -66,7 +66,7 @@ bool EllipticCurve::generateKeyPair(std::string& private_key_hex, ECPoint& publi
         return false;
     }
 
-    private_key_hex = bnToHex32(priv_bn);  // always 64 hex (PR 21)
+    private_key_hex = bnToHex32(priv_bn);  // always 64 hex
 
     // Get public key
     const EC_POINT* pub_point = EC_KEY_get0_public_key(ec_key);
@@ -335,7 +335,7 @@ std::string EllipticCurve::bnToHex(const BIGNUM* bn) {
     return result;
 }
 
-// PR 21: fixed-width (32-byte, 64 hex) encoding for key material and point
+// Fixed-width (32-byte, 64 hex) encoding for key material and point
 // coordinates. bnToHex only pads to an even length, so about 1 in 256
 // coordinates / private keys (leading zero byte) came out 62 hex or
 // shorter, giving malformed pubkeys (64 instead of 66 hex compressed).
@@ -537,7 +537,7 @@ std::string EllipticCurve::signDigestHex(const std::string& private_key_hex, con
     ECDSA_SIG* sig = ECDSA_do_sign(digest.data(), static_cast<int>(digest.size()), ec_key);
     if (!sig) { EC_KEY_free(ec_key); return std::string(); }
 
-    // PR 26: low-S (BIP 62/146). Bitcoin nodes do not relay a signature with
+    // low-S (BIP 62/146). Bitcoin nodes do not relay a signature with
     // S > n/2; (r, n - S) is the equivalent valid signature.
     {
         const BIGNUM* r = nullptr;

@@ -1,4 +1,4 @@
-// PR 41: one PAYOUT per payout. Several nodes may finalize the same MPC
+// One PAYOUT per payout. Several nodes may finalize the same MPC
 // payout: each announces a given txid at most once and not at all if it
 // already applied the payout from another node; a receiver applies a payout
 // once however many copies arrive. The node that finishes an MPC payout also
@@ -154,7 +154,7 @@ const std::string kPool = "2MzQwSSnBHWHqSAqtTVQ6v47XtaisrJa1Vc";
 TEST_CASE("PR41: copies of one PAYOUT from several nodes are applied once", "[pr41][mpc]") {
     Node n;
     (void)n.events();
-    // PR 80: a peer's PAYOUT is applied only for a verifiably solved puzzle.
+    // A peer's PAYOUT is applied only for a verifiably solved puzzle.
     REQUIRE(TA::solveCurrentPuzzle(*n.nm));
     const std::string msg = "PAYOUT:" + kFinder + "|70000|" + kPool + "|29000";
     TA::deliver(*n.nm, n.peer_x, msg);
@@ -193,7 +193,7 @@ TEST_CASE("PR41: the node that finishes an MPC payout shows it and announces it 
 TEST_CASE("PR41: a node that already received the payout does not announce it again", "[pr41][mpc]") {
     Node n;
     (void)n.events();
-    REQUIRE(TA::solveCurrentPuzzle(*n.nm));  // PR 80: see above
+    REQUIRE(TA::solveCurrentPuzzle(*n.nm));  // See above
     TA::deliver(*n.nm, n.peer_x, "PAYOUT:" + kFinder + "|70000|" + kPool + "|29000");
     CHECK(n.events() == 1);
     (void)n.drain();

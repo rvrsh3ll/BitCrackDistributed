@@ -1,4 +1,4 @@
-// PR 5: every Electrum connect/handshake/read is bounded, and the start-up
+// Every Electrum connect/handshake/read is bounded, and the start-up
 // probe runs off the NetworkManager constructor's critical path.
 #include <catch2/catch_test_macros.hpp>
 
@@ -28,7 +28,7 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-// PR 58: upper bounds use the stall-free time of a StallAwareTimer (a box
+// Upper bounds use the stall-free time of a StallAwareTimer (a box
 // stall does not count, a real hang does and aborts) against limits scaled
 // for sanitizer builds; lower bounds use its wall time.
 long long msSince(const stall_aware::StallAwareTimer& t) {

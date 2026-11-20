@@ -1,4 +1,4 @@
-// PR 37: the multi-signer (MPC) payout path sends the PAYOUT notification
+// The multi-signer (MPC) payout path sends the PAYOUT notification
 // too. The node that finalizes and broadcasts the payout tx decodes what the
 // tx actually pays (after the fee and dust handling), leaves out the change
 // back to the puzzle address, and announces it once per PSBT.
@@ -143,7 +143,7 @@ TEST_CASE("PR37: decodeTxOutputs reads legacy and segwit transactions", "[pr37][
             CHECK(outs[0].script == a);
             CHECK(outs[1].value_satoshis == 5000000000ULL);
             CHECK(outs[1].script == b);
-            // Truncated anywhere: rejected, never over-read (PR 41: the
+            // Truncated anywhere: rejected, never over-read (the
             // witness and locktime are checked too).
             for (size_t cut = 2; cut < tx.size(); cut += 2) {
                 std::vector<BitcoinWallet::TxOutput> o2;
@@ -206,7 +206,7 @@ TEST_CASE("PR37: the MPC path announces what the broadcast tx pays, once", "[pr3
         CHECK(sent.find(puzzle) == std::string::npos);
 
         // A signature past the threshold finalizes again: no second notice
-        // (PR 41: keyed by txid).
+        // (keyed by txid).
         CHECK_FALSE(TA::announceMpcPayout(nm, tx));
         CHECK(::recv(sv[1], buf, sizeof buf, MSG_DONTWAIT) <= 0);
         // Unreadable tx: nothing is announced.

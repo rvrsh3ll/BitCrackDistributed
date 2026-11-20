@@ -1,4 +1,4 @@
-// PR 49: log callbacks run without the logger's internal lock held.
+// Log callbacks run without the logger's internal lock held.
 //
 // A callback that takes a lock, or logs itself, can then never deadlock (or
 // form a lock-order cycle) with a thread that logs while holding that lock,
@@ -38,7 +38,7 @@ TEST_CASE("PR49: another thread can log while a callback is running", "[pr49][lo
     std::atomic<bool> waited_ok{false};
     const size_t cb = Logger::addLogCallback([&](Logger::Level, const std::string& msg) {
         if (msg.find("pr49 trigger") != std::string::npos) {
-            // Before PR 49 the other thread's log call blocked on the
+            // Previously the other thread's log call blocked on the
             // logger lock this invocation held, so this wait timed out.
             std::unique_lock<std::mutex> lk(m);
             waited_ok = cv.wait_for(lk, 3s, [&] { return other_logged; });

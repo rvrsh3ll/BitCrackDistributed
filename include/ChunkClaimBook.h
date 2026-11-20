@@ -1,7 +1,7 @@
 #pragma once
 // Chunk-claim voting state (refactor step 4).
 //
-// PR 64: the claim data types, pure helpers and state containers moved out
+// The claim data types, pure helpers and state containers moved out
 // of NetworkManager unchanged. ClaimBook is not thread-safe: its owner
 // guards all of it with one mutex (NetworkManager::chunk_claim_mutex_).
 // No behaviour, log or wire change.
@@ -38,7 +38,7 @@ struct Proposal {
     bool approved = false;
 };
 
-// PR 42: a lease on an approved claim held by another node. A holder's
+// A lease on an approved claim held by another node. A holder's
 // CHUNKDONE renews its leases.
 struct Lease {
     std::string chunk_id;
@@ -66,7 +66,7 @@ struct Outcome {
 
 using Range = std::pair<std::string, std::string>;  // (start, end)
 
-// Claim state key (PR 12): chunk ids are per-node counters and collide
+// Claim state key: chunk ids are per-node counters and collide
 // across nodes, so a claim is identified by (chunk_id, proposer).
 std::string claimKey(const std::string& chunk_id, const std::string& proposer_id);
 
@@ -84,14 +84,14 @@ struct ClaimBook {
     std::unordered_map<std::string, Range> rejected;    // claimKey -> range, for claims rejected or replaced
     std::unordered_map<std::string, int> pending_count;  // peer alias -> pending proposals
     std::unordered_map<std::string, int> claimed_count;  // peer alias -> claimed chunks
-    std::unordered_map<std::string, Lease> leases;                       // claimKey -> lease (PR 42)
+    std::unordered_map<std::string, Lease> leases;                       // claimKey -> lease
     std::unordered_map<std::string, Clock::time_point> holder_last_done;  // holder -> last CHUNKDONE
     std::unordered_map<std::string, double> holder_min_rate;             // holder -> slowest keys/s seen
     std::deque<BufferedVote> buffered_votes;  // votes received before their proposal
     Clock::time_point last_claim_attempt{};
     bool timeout_extended = false;  // extend the next proposal-expiry check once (buffered votes)
 
-    // PR 65: the decisions of proposing, voting and tallying. The caller
+    // The decisions of proposing, voting and tallying. The caller
     // holds the claim mutex; side effects (broadcasts, coordinator, engine,
     // strikes) stay with it. Log lines are unchanged.
 
@@ -112,7 +112,7 @@ struct ClaimBook {
         std::vector<std::string> dropped_own;  // our chunk ids whose claims lost
         // Remote proposals replaced by this one: (start, end, proposer).
         std::vector<std::tuple<std::string, std::string, std::string>> replaced_remote;
-        std::vector<Outcome> replayed;  // claims finalized by buffered votes (PR 14)
+        std::vector<Outcome> replayed;  // claims finalized by buffered votes
     };
     ProposalDecision evaluateProposal(const std::string& chunk_id, const std::string& start_key,
                                       const std::string& end_key, const std::string& proposer_id,
@@ -131,20 +131,20 @@ struct ClaimBook {
     // they finalized.
     std::vector<Outcome> reprocessBufferedVotes(const VoterCount& voter_count, const std::string& local_alias);
 
-    // PR 42: leases another node's approved claim (first approval wins).
+    // Leases another node's approved claim (first approval wins).
     void addLease(const std::string& key, const std::string& chunk_id, const std::string& start_key,
                   const std::string& end_key, const std::string& holder, const std::string& local_alias);
 
-    // PR 66: expiry, leases and peer loss (caller holds the claim mutex).
+    // Expiry, leases and peer loss (caller holds the claim mutex).
 
     // An unfinalized proposal of ours is pending.
     bool hasLiveOwnProposal(const std::string& local_alias) const;
     // Claimed by any proposer.
     bool isClaimed(const std::string& chunk_id) const;
-    // Drops a lost peer's claims, proposals, counters and leases (PR 12/16/42).
+    // Drops a lost peer's claims, proposals, counters and leases.
     void forgetPeer(const std::string& alias);
     // A holder completed [start_key, end_key] at `now`: renews its leases,
-    // records its rate and drops the lease on that range (PR 42).
+    // records its rate and drops the lease on that range.
     void noteHolderCompletion(const std::string& holder, const std::string& start_key, const std::string& end_key,
                               Clock::time_point now);
     // Lease length for `lease`: factor x the expected time at the holder's
@@ -166,7 +166,7 @@ struct ClaimBook {
     using ExpiredProposal = std::tuple<std::string, std::string, long long, std::string, std::string, std::string>;
     std::vector<ExpiredProposal> takeExpiredProposals(uint32_t timeout, Clock::time_point now);
 
-    // PR 67: the claim throttle and the per-proposer claimed check.
+    // The claim throttle and the per-proposer claimed check.
 
     // Records a claim attempt at `now` unless the last one was less than
     // `min_interval` ago (then false, nothing recorded).

@@ -1,4 +1,4 @@
-// PR 26: direct tests for the wallet signing paths (open issue 5).
+// Direct tests for the wallet signing paths (open issue 5).
 //
 // signRawTransaction (legacy P2PKH, SIGHASH_ALL), signPsbtLocally (BIP-143
 // for native P2WPKH inputs) and finalizePsbtLocally had no test. They are
@@ -202,7 +202,7 @@ const std::string kP2pkPriv = "bbc27228ddcb9209d7fd6f36b02f7dfa6252af40bb2f1cbc7
 TEST_CASE("PR26: finalizePsbtLocally assembles the BIP-143 transaction layout", "[pr26][wallet][bip143]") {
     QuietLogs quiet;
     BitcoinWallet w;
-    // PR 32: each input is signed by its own key (input 0 is P2PK); this
+    // Each input is signed by its own key (input 0 is P2PK); this
     // used to sign both with the P2WPKH key and give the P2PK input a
     // P2PKH-style scriptSig.
     const std::string signed_wpkh = w.signPsbtLocally(bip143Psbt(), kP2wpkhPriv);
@@ -309,7 +309,7 @@ TEST_CASE("PR26: wallet signatures are always low-S", "[pr26][wallet]") {
     CHECK(high == 0);
 }
 
-// PR 32: finalizePsbtLocally builds <sig> for P2PK, picks each input's own
+// finalizePsbtLocally builds <sig> for P2PK, picks each input's own
 // signature, and rejects what it cannot finalize.
 namespace {
 // Key 1's uncompressed public key, as a P2PK scriptPubKey.
@@ -369,7 +369,7 @@ TEST_CASE("PR32: finalizePsbtLocally rejects foreign signatures and unsupported 
         return false;
     };
     BitcoinWallet w;
-    // PR 44: signPsbtLocally no longer signs inputs its key does not control,
+    // signPsbtLocally no longer signs inputs its key does not control,
     // so a foreign signature (another node's, or a forged one) is injected.
     auto foreign = [](const std::string& psbt) {
         auto j = nlohmann::json::parse(psbt);
@@ -389,7 +389,7 @@ TEST_CASE("PR32: finalizePsbtLocally rejects foreign signatures and unsupported 
     // P2SH / P2TR inputs are not finalizable here.
     for (const std::string& spk : {std::string("a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87"),
                                    std::string("5120") + kKey1Pub.substr(2)}) {
-        CHECK(w.signPsbtLocally(onePsbt(spk), kKey1).empty());  // PR 44: not signed either
+        CHECK(w.signPsbtLocally(onePsbt(spk), kKey1).empty());  // Not signed either
         CHECK(w.finalizePsbtLocally(foreign(onePsbt(spk))).empty());
     }
     CHECK(logged("only P2PKH, P2WPKH and P2PK inputs can be finalized locally"));

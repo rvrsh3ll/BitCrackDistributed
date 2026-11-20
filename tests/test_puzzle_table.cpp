@@ -1,4 +1,4 @@
-// WP4: the puzzle definition table must stay authentic. The old table was
+// The puzzle definition table must stay authentic. The old table was
 // scrambled (duplicated and misplaced addresses - e.g. #71 carried #125's
 // address and #105 carried puzzle #13's), which silently sent searches at
 // the wrong targets. Every defined puzzle is checked here: unique, valid

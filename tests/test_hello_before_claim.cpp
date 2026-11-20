@@ -1,4 +1,4 @@
-// PR 10: send HELLO before the first chunk claim; faster idle claim retry.
+// Send HELLO before the first chunk claim; faster idle claim retry.
 //
 // The first claim after connecting used to go out before HELLO; the peer
 // rejected it as a proposer mismatch, struck the sender and the claim sat
@@ -227,7 +227,7 @@ TEST_CASE("Two nodes over loopback: no strike, both assigned quickly",
     Config cfg_a = makeNodeConfig(dir_a, port_a, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     Config cfg_b = makeNodeConfig(dir_b, port_b, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     cfg_b.network.bootstrap_nodes = {"127.0.0.1:" + std::to_string(port_a)};
-    // Sequential chunks (see the PR 7 loopback test): both nodes propose the
+    // Sequential chunks (see the loopback test): both nodes propose the
     // same first chunk, the conflict rule picks one and the other retries.
     cfg_a.network.enable_random_chunks = false;
     cfg_b.network.enable_random_chunks = false;

@@ -1,4 +1,4 @@
-// PR 36: a bad --reward prints its error exactly once and exits 1, and
+// A bad --reward prints its error exactly once and exits 1, and
 // --network overrides config.json's bitcoin_network for one run (the
 // config file keeps its own value). Runs the real executable.
 #include <catch2/catch_test_macros.hpp>

@@ -1,4 +1,4 @@
-// PR 61: ResourceMonitor::stop() wakes the monitor thread at once.
+// ResourceMonitor::stop() wakes the monitor thread at once.
 //
 // The monitor thread used to sleep_for(monitoring_interval_ms) between
 // updates, so stop() (and every engine/GUI shutdown that owns a monitor)

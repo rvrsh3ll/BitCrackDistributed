@@ -53,7 +53,7 @@ without modifying a live journal.
    is processed, and during ledger persistence. Preserve a copy of any malformed
    file before restarting. **Pass:** recovery distinguishes durable completion
    from unknown work, reports corruption, and never silently excludes unknown
-   ranges. This tranche does not provide atomic workstate writes; a failure here
+   ranges. Workstate writes are not atomic yet; a failure here
    blocks launch and is evidence for the durability follow-up.
 4. **Context and legacy recovery:** on lab copies, test an old ID-only ledger,
    duplicate IDs with distinct ranges, wrong target metadata, truncated JSON, and

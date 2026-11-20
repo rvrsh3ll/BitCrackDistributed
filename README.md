@@ -2,20 +2,23 @@
 
 A distributed Bitcoin puzzle solver with GPU acceleration and decentralized progress tracking.
 
-## Launch Readiness
+## Project Status
 
-Public launch remains gated on correctness and recovery evidence:
+BitCrack Distributed is under active development. Current limits:
 
-- [Launch blockers, acceptance criteria, and two-week plan](docs/launch-blockers.md)
-- [Operator rehearsal and failure-injection runbook](docs/launch-runbook.md)
+- **GPU search is in development.** `main` searches on the CPU. The CUDA search
+  kernel is merged only after it has been verified on real hardware.
+- **Windows is untested on real Windows.** Linux is the tested platform. The
+  [Windows install guide](docs/INSTALL_WINDOWS.md) is a first draft; please report
+  what you hit.
+- **CI is manual-only.** The GitHub Actions workflows (`CI`, `Launch gates`,
+  `Release`) run only when started by hand (`workflow_dispatch`). Changes are
+  verified with a full local check run (Release, ASan, TSan and GUI test builds
+  plus two-node smoke tests).
 
-The `Launch gates` workflow (`.github/workflows/launch-gates.yml`) runs Release/ASan
-tests, a two-node smoke, a Windows CPU build and focused TSan coverage. All workflows
-run only when started manually (`workflow_dispatch`). **As of 2026-11-18 its runs fail.** For example, the Windows CPU job breaks
-because Chocolatey now installs OpenSSL 4.x (see [docs/INSTALL_WINDOWS.md](docs/INSTALL_WINDOWS.md)).
-Changes are verified with the full local check run instead. GPU correctness,
-completion verification, crash-safe persistence, and multi-host soak remain explicit
-launch gates.
+Open correctness and hardening work, with acceptance criteria, is tracked in
+[docs/launch-blockers.md](docs/launch-blockers.md). The operator rehearsal and
+failure-injection procedure is in [docs/launch-runbook.md](docs/launch-runbook.md).
 
 ## Overview
 
@@ -27,12 +30,12 @@ BitCrack Distributed is a cross-platform application designed to solve Bitcoin p
 - **Standalone Found-Key Flow**: a non-P2P client that finds a key journals it owner-only at once (0600 / Windows owner-only DACL) and auto-sweeps the target balance to your reward address, with retry, restart resume, and no key material ever logged.
 - **Verified Puzzle Table**: puzzle addresses 71-160 validated against on-chain data (two independent trackers agree; every published solved key re-derives to its listed address in CI).
 - **Binary Target Pipeline**: Engine, GPU manager, and network stack share raw hash160 targets for faster comparisons.
-- **GPU Acceleration (not on `main` yet)**: `main` searches on the CPU kernel. CUDA/OpenCL device enumeration exists, but the kernels on `main` are stubs. The real CUDA search kernel (RTX 50-series / `sm_120` capable) is in the unmerged PRs #74-#76 until it is verified on hardware; see [docs/INSTALL_WINDOWS.md](docs/INSTALL_WINDOWS.md#testing-the-cuda-kernel-pr-76).
+- **GPU Acceleration (not on `main` yet)**: `main` searches on the CPU kernel. CUDA/OpenCL device enumeration exists, but the kernels on `main` are stubs. The real CUDA search kernel (RTX 50-series / `sm_120` capable) is in development and is merged once it is verified on hardware; see [docs/INSTALL_WINDOWS.md](docs/INSTALL_WINDOWS.md#testing-the-cuda-kernel).
 - **Consensus & Rewards (Prototype)**: Lightweight vote-based consensus plus contribution-weighted reward ledger in the network layer.
-- **Consensus Chain Mode (Beta)**: Block-based ledger (`network.enable_consensus_chain`, on by default) that records chunk completions in Merkle-linked blocks. Blocks are persisted and replayed onto genesis after a restart (#81), and nodes sync the best chain by locator with paging (#82).
-- **P2P Puzzle Targets and Trust**: each node loads the active puzzle's target from its own puzzle table (#78). Peers can't switch a node's puzzle; only a verifiably solved puzzle advances it (#80).
-- **Stats API**: optional read-only HTTP JSON API (`/status`, `/peers`, `/chunks`) plus a 60 s `Stats:` log line (#83); see [Stats API](#stats-api-read-only-off-by-default).
-- **Peer Discovery**: bootstrap hostnames are resolved on every attempt, and every address is tried (#79). New configs default to the public seeds by hostname plus raw-IP fallback, and one address is dialed once per pass (#84); see [Joining the public network](#joining-the-public-network-default-seeds). Peers also gossip endpoints (`PEERADDR`).
+- **Consensus Chain Mode (Beta)**: Block-based ledger (`network.enable_consensus_chain`, on by default) that records chunk completions in Merkle-linked blocks. Blocks are persisted and replayed onto genesis after a restart, and nodes sync the best chain by locator with paging.
+- **P2P Puzzle Targets and Trust**: each node loads the active puzzle's target from its own puzzle table. Peers can't switch a node's puzzle; only a verifiably solved puzzle advances it.
+- **Stats API**: optional read-only HTTP JSON API (`/status`, `/peers`, `/chunks`) plus a 60 s `Stats:` log line; see [Stats API](#stats-api-read-only-off-by-default).
+- **Peer Discovery**: bootstrap hostnames are resolved on every attempt, and every address is tried. New configs default to the public seeds by hostname plus raw-IP fallback, and one address is dialed once per pass; see [Joining the public network](#joining-the-public-network-default-seeds). Peers also gossip endpoints (`PEERADDR`).
 - **Cross-Platform Core**: Builds with CMake on Linux (tested) and macOS. Windows support is in the code, but a Windows build hasn't been verified yet; see [docs/INSTALL_WINDOWS.md](docs/INSTALL_WINDOWS.md).
 - **Resource Monitoring**: CPU and GPU usage sampling with configurable thresholds.
 - **GUI Dashboard**: Live telemetry card (keys/sec, CPU/GPU) with a recent chunk pill; export/copy buttons removed for a slimmer surface.
@@ -75,10 +78,10 @@ These puzzles involve finding private keys for Bitcoin addresses with known publ
 ## GPU Acceleration
 
 > **Status:** on `main` the files below are stubs and searching runs on the CPU kernel.
-> The real CUDA search kernel is in the unmerged PRs #74-#76 (`cuda-3-kernel-integration`)
-> and is merged only after it is verified on real hardware. Testing steps are in
-> [docs/INSTALL_WINDOWS.md](docs/INSTALL_WINDOWS.md#testing-the-cuda-kernel-pr-76) and in
-> `docs/CUDA_KERNEL.md` on that branch. The rest of this section describes the planned design.
+> The real CUDA search kernel is in development on a separate branch
+> (`cuda-3-kernel-integration`) and is merged only after it is verified on real
+> hardware. Testing steps are in
+> [docs/INSTALL_WINDOWS.md](docs/INSTALL_WINDOWS.md#testing-the-cuda-kernel). The rest of this section describes the planned design.
 
 The planned GPU support covers both CUDA and OpenCL:
 
@@ -238,7 +241,7 @@ Notes:
 
 ### Consensus Chain Mode
 
-The block-based ledger is on by default (`network.enable_consensus_chain` is `true`; `block_time_seconds` defaults to 300). When enabled, nodes wrap confirmed chunks into `COMMIT` messages, mine lightweight KeyspaceBlocks, and persist them to a shared ledger. Peers synchronize via `GETBLOCKS`/`HEADERS`/`GETDATA`/`BLOCK`: a node sends a block locator and keeps paging (64 headers at a time) until it has caught up with its peer's best chain, and it reorganizes onto a heavier chain (#82). Blocks received by sync are persisted, and on restart the stored blocks are replayed onto genesis (#81), so a node keeps the synced chain. Example configuration:
+The block-based ledger is on by default (`network.enable_consensus_chain` is `true`; `block_time_seconds` defaults to 300). When enabled, nodes wrap confirmed chunks into `COMMIT` messages, mine lightweight KeyspaceBlocks, and persist them to a shared ledger. Peers synchronize via `GETBLOCKS`/`HEADERS`/`GETDATA`/`BLOCK`: a node sends a block locator and keeps paging (64 headers at a time) until it has caught up with its peer's best chain, and it reorganizes onto a heavier chain. Blocks received by sync are persisted, and on restart the stored blocks are replayed onto genesis, so a node keeps the synced chain. Example configuration:
 
 ```json
 {
@@ -252,7 +255,7 @@ The block-based ledger is on by default (`network.enable_consensus_chain` is `tr
 
 Notes:
 - Commit quorum is fixed at 2 in code and not exposed via config.
-- Late joiners catch up through the block sync above. Since #80 an unsolicited `STATE` from a peer no longer switches a node's puzzle.
+- Late joiners catch up through the block sync above. An unsolicited `STATE` from a peer no longer switches a node's puzzle.
 
 All nodes operate as equal peers in consensus mode, producing range blocks at the configured cadence while benefiting from deterministic replay.
 
@@ -331,7 +334,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for coding style, build/test expectations
 
 ### Bitcoin-style consensus (in progress)
 
-> Partly outdated: there are no coordinators any more. Every node is an equal peer, and the block sync described under "Consensus Chain Mode" (#81, #82) is what runs today.
+> Partly outdated: there are no coordinators any more. Every node is an equal peer, and the block sync described under "Consensus Chain Mode" is what runs today.
 
 The next iteration of BitCrack Distributed introduces a Bitcoin-inspired, proof-of-work ledger for range completions. Coordinators assemble `CHUNKDONE` records into block templates, mine a header that satisfies a compact difficulty target, and broadcast the resulting block to peers. Other nodes validate the header hash, Merkle root, and individual range commitments before extending their local chain. Chain selection follows the most-work rule, so the active coordinator is always the miner of the current tip. See `docs/consensus-bitcoin.md` for the design notes.
 
@@ -602,13 +605,13 @@ The network layer uses a P2P message protocol for consensus-based coordination:
 5. **CHUNKCLAIMVOTE**: Peer votes to approve/reject a chunk claim
 6. **CHUNKCLAIMAPPROVED**: Broadcast when claim reaches majority approval
 7. **PROPOSAL / VOTE**: Submit payloads to consensus engine and broadcast votes
-8. **KEYFOUND / KEYPROOF**: announce a find (finder and reward address only, never the key) and prove it with a signature made with the found key. Peers verify that before treating the puzzle as solved (#80). (The legacy `KEY` verb is still parsed but never sent.)
+8. **KEYFOUND / KEYPROOF**: announce a find (finder and reward address only, never the key) and prove it with a signature made with the found key. Peers verify that before treating the puzzle as solved. (The legacy `KEY` verb is still parsed but never sent.)
 
 ### Progress Tracking
 9. **CONTRIB**: Broadcast contribution deltas (peer|keys|chunks) for UI synchronization
 10. **CHUNKDONE**: Broadcast confirmed chunk completion (chunk_id|start|end|peer); all peers append to local workstate
 11. **COMMIT / INV / GETBLOCKS / HEADERS / GETDATA / BLOCK / BLOCKDATA**: block-based ledger and block sync
-12. **PUZZLEADV / PAYOUT**: advisory only. Followed only once the current puzzle is verifiably solved (#80).
+12. **PUZZLEADV / PAYOUT**: advisory only. Followed only once the current puzzle is verifiably solved.
 13. **PEERADDR**: endpoint gossip for peer discovery
 
 All chunk assignments use decentralized consensus voting - there is no central coordinator.

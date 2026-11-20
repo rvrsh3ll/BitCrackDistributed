@@ -1,6 +1,6 @@
 #pragma once
 
-// PR 18: persistent node signing key and the alias -> pubkey pinning store
+// Persistent node signing key and the alias -> pubkey pinning store
 // (peer-auth proposal, steps 1 and 3).
 //
 //   <data_directory>/node_key.json     secp256k1 key, created 0600, loaded

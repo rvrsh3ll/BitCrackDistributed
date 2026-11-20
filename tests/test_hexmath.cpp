@@ -1,4 +1,4 @@
-// PR 4: shared HexMath helper (replaces the copies that used to live in
+// Shared HexMath helper (replaces the copies that used to live in
 // NetworkManager, WorkCoordinator, BitCrackEngine, ConsensusEngine and
 // KeyspaceChainStore) + WorkCoordinator short-gap random offset fix.
 #include <catch2/catch_test_macros.hpp>

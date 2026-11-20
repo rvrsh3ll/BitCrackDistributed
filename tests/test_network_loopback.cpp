@@ -1,4 +1,4 @@
-// PR 1: POSIX select() nfds fix and owned NetworkManager background thread.
+// POSIX select() nfds fix and owned NetworkManager background thread.
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
@@ -97,7 +97,7 @@ int nonBlockingConnect(uint16_t port) {
 
 template <typename Pred>
 bool waitUntil(Pred pred, std::chrono::milliseconds timeout) {
-    // PR 58: stall-free, sanitizer-scaled timeout (still bounded).
+    // Stall-free, sanitizer-scaled timeout (still bounded).
     return stall_aware::waitUntil(pred, timeout, std::chrono::milliseconds(50));
 }
 
@@ -167,7 +167,7 @@ TEST_CASE("Two NetworkManagers connect over 127.0.0.1 loopback", "[network][loop
         CHECK(a_sees_b);
 
         {
-            // PR 58: stall-free time, limit scaled for sanitizers; a real hang aborts.
+            // Stall-free time, limit scaled for sanitizers; a real hang aborts.
             stall_aware::StallAwareTimer timer("b.stop(); a.stop()");
             b.stop();
             a.stop();
@@ -208,7 +208,7 @@ TEST_CASE("NetworkManager start/stop is prompt and idempotent", "[network][lifec
         nm.start(); // second start is a no-op
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         {
-            // PR 58: stall-free time, limit scaled for sanitizers; a real hang aborts.
+            // Stall-free time, limit scaled for sanitizers; a real hang aborts.
             stall_aware::StallAwareTimer timer("nm.stop() twice");
             nm.stop();
             nm.stop(); // second stop is a no-op

@@ -40,7 +40,7 @@ bool ConfigManager::load() {
             return save(); // Save default config
         }
 
-        // PR 39: config.json identifies this node (node UUID, reward
+        // config.json identifies this node (node UUID, reward
         // address, peers) and is owner-only; narrow a file an older version
         // wrote with the default umask.
         if (secret_file::restrictToOwner(config_file_path_)) {
@@ -72,7 +72,7 @@ bool ConfigManager::load() {
                           " has a value of the wrong type; settings after that key were not applied");
         }
 
-        // PR 31: validate the network and the reward address at load time.
+        // Validate the network and the reward address at load time.
         BitcoinNetwork net = BitcoinNetwork::Mainnet;
         if (!parseBitcoinNetwork(config_.bitcoin_network, net)) {
             Logger::error("Config file " + config_file_path_ + ": unknown bitcoin_network '" + config_.bitcoin_network +
@@ -128,7 +128,7 @@ bool ConfigManager::save() const {
         std::string json_str;
         toJson(config_, json_str);
 
-        // PR 39: owner-only (0600); it was written with the default umask
+        // Owner-only (0600); it was written with the default umask
         // (usually 0644).
         if (!secret_file::writeOwnerOnly(config_file_path_, json_str)) {
             Logger::error(std::string("Failed to write config file: ") + config_file_path_);
@@ -167,12 +167,12 @@ void ConfigManager::toJson(const Config& config, std::string& json) const {
     j["contribution_weight"] = config.contribution_weight;
     j["validation_confirmations"] = config.validation_confirmations;
     j["enable_rewards"] = config.enable_rewards;
-    // PR 46: MPC payouts are opt-in (default false). These keys were never
+    // MPC payouts are opt-in (default false). These keys were never
     // written or read, so a config file could not turn MPC on or off.
     j["enable_mpc"] = config.enable_mpc;
     j["mpc_threshold"] = config.mpc_threshold;
     j["mpc_provider"] = config.mpc_provider;
-    j["payout_retry_initial_s"] = config.payout_retry_initial_s;  // PR 47
+    j["payout_retry_initial_s"] = config.payout_retry_initial_s;
     j["payout_retry_max_s"] = config.payout_retry_max_s;
 
     // Network config
@@ -252,9 +252,9 @@ void ConfigManager::toJson(const Config& config, std::string& json) const {
                                     {"range_end", config.regtest_test_puzzle.range_end}};
     }
     j["electrum_servers"] = config.electrum_servers;
-    // PR 46: the direct payout broadcasts over RPC with the bitcoind backend
+    // The direct payout broadcasts over RPC with the bitcoind backend
     // (and as the Electrum fallback); these were never read from or written
-    // to the file. The file is owner-only (0600, PR 39); the password is
+    // to the file. The file is owner-only (0600); the password is
     // written only when set and never logged.
     j["bitcoin_rpc_url"] = config.bitcoin_rpc_url;
     if (!config.bitcoin_rpc_user.empty()) j["bitcoin_rpc_user"] = config.bitcoin_rpc_user;
@@ -285,12 +285,12 @@ bool ConfigManager::fromJson(const std::string& json, Config& config) const {
         config.contribution_weight = j.value("contribution_weight", config.contribution_weight);
         config.validation_confirmations = j.value("validation_confirmations", config.validation_confirmations);
         config.enable_rewards = j.value("enable_rewards", config.enable_rewards);
-        // PR 46: a file without enable_mpc gets the default (false), whatever
+        // A file without enable_mpc gets the default (false), whatever
         // `config` held before; an explicit true is respected.
         config.enable_mpc = j.value("enable_mpc", defaults.enable_mpc);
         config.mpc_threshold = j.value("mpc_threshold", defaults.mpc_threshold);
         config.mpc_provider = j.value("mpc_provider", defaults.mpc_provider);
-        config.payout_retry_initial_s = j.value("payout_retry_initial_s", defaults.payout_retry_initial_s);  // PR 47
+        config.payout_retry_initial_s = j.value("payout_retry_initial_s", defaults.payout_retry_initial_s);
         config.payout_retry_max_s = j.value("payout_retry_max_s", defaults.payout_retry_max_s);
 
         // Parse network config
@@ -327,7 +327,7 @@ bool ConfigManager::fromJson(const std::string& json, Config& config) const {
             if (net.contains("bootstrap_nodes")) {
                 // An explicit list is the user's choice, [] included (a
                 // local-only node). Only a list identical to an old built-in
-                // default is upgraded to the current default (PR 84).
+                // default is upgraded to the current default.
                 config.network.bootstrap_nodes = net["bootstrap_nodes"].get<std::vector<std::string>>();
                 if (!config.network.bootstrap_nodes.empty() &&
                     bootstrap_defaults::isLegacyDefault(config.network.bootstrap_nodes)) {

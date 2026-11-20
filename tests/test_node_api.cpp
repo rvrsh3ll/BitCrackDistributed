@@ -1,4 +1,4 @@
-// PR 83: read-only stats API. JSON fields are present, nothing secret leaks,
+// Read-only stats API. JSON fields are present, nothing secret leaks,
 // non-loopback binds are refused by default, bad requests get proper errors,
 // and hostile clients (garbage, oversized, slow, many at once) cannot crash
 // or wedge the server.

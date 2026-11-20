@@ -1,4 +1,4 @@
-// PR 81: a node restarted with its persisted chainstore must rebuild the same
+// A node restarted with its persisted chainstore must rebuild the same
 // consensus chain (genesis first, then its own stored blocks), and blocks it
 // exchanges with peers over BLOCK must round-trip (empty chunk_id / empty
 // genesis previous_hash fields) so a restarted node syncs without strikes.

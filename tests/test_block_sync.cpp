@@ -1,4 +1,4 @@
-// PR 82: block sync keeps paging until caught up with the peer's best chain,
+// Block sync keeps paging until caught up with the peer's best chain,
 // reorganizes onto a heavier chain, and persists synced blocks so a restart
 // does not fall back to the node's own blocks.
 #include <catch2/catch_test_macros.hpp>

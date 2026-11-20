@@ -1,4 +1,4 @@
-// PR 46: MPC payouts are off by default; the finder pays out directly.
+// MPC payouts are off by default; the finder pays out directly.
 //
 // A puzzle address is a single-key output: only the finder holds its key and
 // no key shares exist, so a multi-party payout could never collect

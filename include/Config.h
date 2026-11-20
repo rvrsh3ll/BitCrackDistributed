@@ -30,7 +30,7 @@ struct NetworkConfig {
     bool enable_random_chunks = true;   // When true, coordinator/independent node samples random chunks first
     uint32_t random_chunk_retries = 4;   // How many random attempts before falling back to sequential
     uint32_t chunk_claim_timeout_s = 60;  // Timeout (seconds) for pending chunk proposals; 0 = disabled (default 60s)
-    // PR 42: lease on a chunk claim another node holds (approved). The holder
+    // Lease on a chunk claim another node holds (approved). The holder
     // renews all its claims each time it completes a chunk (CHUNKDONE); a
     // claim whose holder completes nothing for its lease loses it and the
     // range is handed out again. Lease = max(claim_lease_min_s,
@@ -39,7 +39,7 @@ struct NetworkConfig {
     // has no history yet). claim_lease_factor = 0 disables the lease.
     uint32_t claim_lease_factor = 10;
     uint32_t claim_lease_min_s = 21600;  // 6 hours
-    // Idle claim retry (PR 10): an idle node with a handshaken peer retries a
+    // Idle claim retry: an idle node with a handshaken peer retries a
     // chunk claim after claim_retry_interval_ms, doubling up to
     // claim_retry_max_interval_ms while attempts find nothing to propose. Never
     // more than one own proposal in flight. 0 disables the dedicated retry
@@ -55,10 +55,10 @@ struct NetworkConfig {
     // the chain or the ledger is edited; idempotent across restarts.
     std::string rescan_ranges_file;
     std::vector<std::string> rescan_ignore_completions_from;
-    // Peer authentication (PR 19). After HELLO each side sends
+    // Peer authentication. After HELLO each side sends
     // AUTHCHALLENGE:1|<nonce> and answers the other's with
     // AUTH:1|<alias>|<pubkey>|<sig>. "off": never challenge, ignore AUTH*
-    // (the pre-PR 19 behaviour). "prefer": authenticate when the peer can;
+    // (the legacy behaviour). "prefer": authenticate when the peer can;
     // a peer that sends neither within peer_auth_timeout_ms is treated as an
     // older peer and still takes part in claims. "require": only
     // authenticated peers take part in claims and CHUNKDONE.
@@ -123,7 +123,7 @@ struct RegtestTestPuzzle {
     std::string range_end;
 };
 
-// Default bootstrap peers for new and default configs (PR 84). Hostnames are
+// Default bootstrap peers for new and default configs. Hostnames are
 // resolved (IPv4 A records) on every connect attempt; seed.* carries one A
 // record per seed node. The raw IPs are the same three seeds, a fallback while
 // the DNS records do not exist; one address is never dialed twice per pass,
@@ -176,7 +176,7 @@ inline bool isLegacyDefault(std::vector<std::string> v) {
 struct Config {
     std::string reward_address;  // Bitcoin address for receiving rewards
 
-    // Read-only node stats HTTP API (PR 83). Off by default. api_bind is
+    // Read-only node stats HTTP API. Off by default. api_bind is
     // host:port; a non-loopback host is refused unless api_allow_remote.
     bool api_enabled = false;
     std::string api_bind = "127.0.0.1:3339";
@@ -206,14 +206,14 @@ struct Config {
     uint32_t validation_confirmations = 3;
     bool enable_rewards = true;
     // MPC/HSM settings
-    // PR 46: off by default. A puzzle address is a single-key output: only
+    // Off by default. A puzzle address is a single-key output: only
     // the finder holds its key and no key shares exist, so a multi-party
     // payout can never collect mpc_threshold signatures. With MPC off the
     // finder signs the payout with the found key and broadcasts it itself.
     // MPC stays available as an explicit, experimental opt-in.
     bool enable_mpc = false;      // Multi-party signing / HSM payouts (experimental, opt-in)
     uint32_t mpc_threshold = 3;    // Number of partial signatures required
-    // PR 47: a direct payout whose balance lookup, broadcast or confirmation
+    // A direct payout whose balance lookup, broadcast or confirmation
     // check fails is retried with exponential backoff from
     // payout_retry_initial_s, doubling up to payout_retry_max_s, until it
     // confirms (also across restarts, from the found-key file).
@@ -222,7 +222,7 @@ struct Config {
     std::string mpc_provider = ""; // Optional HSM provider identifier
     // Wallet backend selection: 'bitcoind' (RPC) or 'electrum'
     std::string bitcoin_backend = "electrum"; // default to electrum (no local node required)
-    // PR 31: network reward/payout addresses must belong to: mainnet
+    // Network reward/payout addresses must belong to: mainnet
     // (default), testnet, signet or regtest.
     std::string bitcoin_network = "mainnet";
     RegtestTestPuzzle regtest_test_puzzle;  // config key "regtest_test_puzzle"

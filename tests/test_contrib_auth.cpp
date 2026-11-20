@@ -1,4 +1,4 @@
-// PR 23 (peer-auth open issue 1): CONTRIB and CONTRIBSNAP under the
+// Peer-auth open issue 1: CONTRIB and CONTRIBSNAP under the
 // peer-auth rules.
 //
 // Under prefer/require a CONTRIB is credited only when it is signed by the key
@@ -284,7 +284,7 @@ TEST_CASE("PR23: an older peer's completion is still credited once, via its CHUN
     const uint64_t c = f.legacy(lc, kCarol);
     const std::string cl = contrib(f, kCarol, carol);
     TA::deliver(f.nm, c, cl);                         // not credited (self-certified)
-    TA::deliver(f.nm, c, chunkDoneFromContrib(cl));  // the PR 22 rule for its own unpinned alias
+    TA::deliver(f.nm, c, chunkDoneFromContrib(cl));  // the CHUNKDONE rule for its own unpinned alias
     CHECK(TA::rewardKeys(f.nm, kCarol) == 16);
     CHECK(f.completed(kCarol));
 }

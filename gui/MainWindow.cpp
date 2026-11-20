@@ -125,7 +125,7 @@ bool MainWindow::promptForRewardAddressIfNeeded() {
     // Validate address using BitcoinWallet
     if (network_manager_ && network_manager_->getBitcoinWallet()) {
         if (!network_manager_->getBitcoinWallet()->isValidAddress(address)) {
-            // PR 31: say why (checksum, wrong network, ...).
+            // Say why (checksum, wrong network, ...).
             const std::string why = network_manager_->getBitcoinWallet()->addressError(address);
             QMessageBox::critical(this,
                 tr("Invalid Address"),
@@ -259,19 +259,19 @@ QWidget* MainWindow::buildDashboardTab() {
     // Top-left: Status
     auto [statusPane, statusLbl] = makePane(tr("Status"));
     status_pane_text_ = statusLbl;
-    statusLbl->setObjectName(QStringLiteral("statusPaneText"));  // PR 52: found by tests
+    statusLbl->setObjectName(QStringLiteral("statusPaneText"));  // Found by tests
     mainLayout->addWidget(statusPane, 0, 0);
 
     // Top-right: Telemetry
     auto [telemetryPane, telemetryLbl] = makePane(tr("Telemetry"));
     telemetry_pane_text_ = telemetryLbl;
-    telemetryLbl->setObjectName(QStringLiteral("telemetryPaneText"));  // PR 52: found by tests
+    telemetryLbl->setObjectName(QStringLiteral("telemetryPaneText"));  // Found by tests
     mainLayout->addWidget(telemetryPane, 0, 1);
 
     // Bottom-left: Chunk
     auto [chunkPane, chunkLbl] = makePane(tr("Current Chunk"));
     chunk_pane_text_ = chunkLbl;
-    chunkLbl->setObjectName(QStringLiteral("chunkPaneText"));  // PR 52: found by tests
+    chunkLbl->setObjectName(QStringLiteral("chunkPaneText"));  // Found by tests
     mainLayout->addWidget(chunkPane, 1, 0);
 
     // Bottom-right: Network
@@ -656,7 +656,7 @@ void MainWindow::onStartClicked() {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-    // PR 56: the second pass, once the background shutdown finished (or timed
+    // The second pass, once the background shutdown finished (or timed
     // out), really closes the window.
     if (close_accepted_) {
         event->accept();
@@ -772,7 +772,7 @@ void MainWindow::showPayoutDialog(const PuzzleSolvedEvent& evt) {
 }
 
 void MainWindow::appendLogMessage(const QString& text) {
-    // PR 51: the Logger callback runs on whichever thread logged (engine,
+    // The Logger callback runs on whichever thread logged (engine,
     // network, payout worker...), but widgets may only be touched on the GUI
     // thread. Off that thread the line (timestamped now) is queued to this
     // window's thread; if the window is destroyed first, Qt drops the queued

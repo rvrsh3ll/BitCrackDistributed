@@ -67,7 +67,7 @@ struct PeerInfo {
     std::string alias;
 };
 
-// PR 83: read-only views for the stats API.
+// Read-only views for the stats API.
 struct PeerDetail {
     uint64_t id = 0;
     std::string address;
@@ -99,7 +99,7 @@ struct ConnectedPeer {
     // index across an unlock, because erasing a peer shifts the positions.
     uint64_t id = 0;
     SOCKET socket;
-    // PR 25: dropped for misbehaviour (disconnectPeer / strikeAuthFailure);
+    // Dropped for misbehaviour (disconnectPeer / strikeAuthFailure);
     // the rest of a buffer already read from it is not processed.
     bool dropped = false;
     std::string address;
@@ -107,9 +107,9 @@ struct ConnectedPeer {
     std::string alias;
     std::chrono::steady_clock::time_point last_seen;
     std::chrono::steady_clock::time_point last_contribution;
-    std::chrono::steady_clock::time_point connected_at = std::chrono::steady_clock::now();  // PR 83
+    std::chrono::steady_clock::time_point connected_at = std::chrono::steady_clock::now();
     bool handshake_sent = false;
-    // PR 10: HELLO handshake state. A peer takes part in chunk claims (gets
+    // HELLO handshake state. A peer takes part in chunk claims (gets
     // proposals/votes, counts towards the gate and the quorum) only once we
     // have sent it our HELLO (so it can attribute our claims) and received its
     // HELLO (so we know its alias). handshake_sent above is the older "reply
@@ -117,7 +117,7 @@ struct ConnectedPeer {
     bool hello_sent = false;
     bool hello_received = false;
     bool handshakeComplete() const { return hello_sent && hello_received; }
-    // PR 19: per-connection peer authentication (AUTHCHALLENGE/AUTH after
+    // Per-connection peer authentication (AUTHCHALLENGE/AUTH after
     // HELLO). Pending until the peer answers our challenge with a valid AUTH
     // (Authenticated), fails it (Failed), or sends neither AUTHCHALLENGE nor
     // AUTH within peer_auth_timeout_ms of its HELLO (Legacy: an older peer).
@@ -156,12 +156,12 @@ public:
     void stop();
     bool isConnected() const;
     std::vector<PeerInfo> getConnectedPeers() const;
-    std::vector<PeerDetail> getPeerDetails() const;  // PR 83
-    // PR 84, tests only: every outbound P2P connect asks this first (ip, port);
+    std::vector<PeerDetail> getPeerDetails() const;
+    // tests only: every outbound P2P connect asks this first (ip, port);
     // false refuses the dial. The test binary installs a loopback-only guard
     // so no test can reach a real peer. Install before any NetworkManager starts.
     static void setOutboundDialGuardForTest(std::function<bool(const std::string&, int)> guard);
-    ChunkSummary getChunkSummary() const;            // PR 83
+    ChunkSummary getChunkSummary() const;
     ConsensusEngine::ChainSnapshot getChainSnapshot() const { return consensus_engine_.getChainSnapshot(); }
     
     // Work coordination
@@ -181,7 +181,7 @@ public:
     uint64_t getAssignedChunks() const { return p2p_keyspace_manager_.getAssignedRanges(getLocalAlias()).size(); }
     size_t getPersistedBlockCount() const;
     std::string getLocalAlias() const;
-    // PR 17: uuid first, then reward-address prefix, then "Anonymous".
+    // uuid first, then reward-address prefix, then "Anonymous".
     static std::string deriveLocalAlias(const std::string& node_uuid, const std::string& reward_address);
     std::string getCurrentChunkId() const { std::lock_guard<std::mutex> lk(state_mutex_); return current_chunk_id_; }
     uint64_t getCurrentChunkSize() const { std::lock_guard<std::mutex> lk(state_mutex_); return last_chunk_size_; }
@@ -237,9 +237,9 @@ private:
     // Handle message from the peer with this stable id (survives HELLO renames
     // and other peers disconnecting). A missing id means the peer is gone.
     void handlePeerMessageById(uint64_t peer_id, const std::string& message);
-    // PR 68: one parsed line of a peer message, handed to a per-verb handler.
+    // One parsed line of a peer message, handed to a per-verb handler.
     // The references point into handlePeerMessageById's locals for that line;
-    // peer_alias is the alias re-read for this line (PR 25).
+    // peer_alias is the alias re-read for this line.
     struct PeerLine {
         uint64_t peer_id;
         const std::string& peer_alias;
@@ -247,10 +247,10 @@ private:
         const std::string& payload;
         const std::string& line;
     };
-    // PR 69: how handlePeerMessageById routes a verb (see verbRoutes()).
+    // How handlePeerMessageById routes a verb (see verbRoutes()).
     struct VerbRoute {
         void (*handle)(NetworkManager& nm, const PeerLine& m);
-        bool claim_traffic;  // PR 19: dropped unless acceptsClaimTrafficFrom(peer)
+        bool claim_traffic;  // Dropped unless acceptsClaimTrafficFrom(peer)
     };
     static const std::unordered_map<std::string, VerbRoute>& verbRoutes();
     void recvPing(const PeerLine& m);
@@ -297,13 +297,13 @@ private:
     // Returns the new peer's stable id. outbound: we dialled it, so our HELLO
     // is sent first, before any other message on the connection.
     uint64_t addPeer(SOCKET socket, const std::string& address, int port, bool outbound = false);
-    // PR 10: claim participation is limited to handshaken peers.
+    // Claim participation is limited to handshaken peers.
     // Distinct aliases of handshaken peers (excluding our own); caller holds peers_mutex_.
     size_t handshakenPeerCountLocked() const;
     // Voters for a chunk claim: handshaken peers + ourselves. Locks peers_mutex_.
     size_t claimVoterCount() const;
     void broadcastToHandshakenPeers(const std::string& message);
-    // PR 19: peer authentication.
+    // Peer authentication.
     enum class PeerAuthPolicy { Off, Prefer, Require };
     static PeerAuthPolicy parsePeerAuthPolicy(const std::string& value, bool* valid = nullptr);
     // The state a connection counts as now (a Pending peer past the timeout
@@ -333,7 +333,7 @@ private:
     std::chrono::milliseconds claimThrottleRemaining() const;
     bool isIdleForClaim() const;
     void wakeClaimRetry();
-    // PR 27: true the first time a completion (puzzle, peer, range) is
+    // true the first time a completion (puzzle, peer, range) is
     // credited in this process; every credit site, including rehydration,
     // goes through it, so reloading the work state never credits twice.
     bool creditCompletionOnce(const std::string& peer, const std::string& start, const std::string& end);
@@ -377,10 +377,10 @@ private:
     size_t effectiveCommitQuorum() const;
     // Exposed testing hooks moved to public
     static std::vector<std::string> splitString(const std::string& payload, char delimiter);
-    // PR 81: rebuilds the chain from this node's own persisted blocks at
+    // Rebuilds the chain from this node's own persisted blocks at
     // startup (after genesis); returns how many linked.
     size_t replayPersistedBlocks(const std::vector<KeyspaceBlock>& blocks, const std::string& source);
-    // PR 82: block sync helpers.
+    // Block sync helpers.
     std::string blockLocatorPayload() const;
     bool markBlockRequestedLocked(const std::string& hash);  // consensus_mutex_ held
     void storeBlockOrphan(const ConsensusEngine::Block& block);
@@ -408,7 +408,7 @@ private:
     std::thread peer_thread_;
     // Delayed initial-claim trigger (was a detached thread in the ctor).
     std::thread startup_claim_thread_;
-    // PR 10: dedicated idle claim retry (waits on shutdown_cv_).
+    // Dedicated idle claim retry (waits on shutdown_cv_).
     std::thread claim_retry_thread_;
     bool claim_retry_wake_ = false; // guarded by shutdown_mutex_
 
@@ -459,7 +459,7 @@ private:
     std::string last_completed_end_{};
     std::string local_alias_{};
     mutable std::mutex alias_mutex_;  // leaf lock: local_alias_ changes in setRewardAddress
-    std::string reward_prefix_alias_;  // the alias pre-PR 17 builds used (reward address prefix)
+    std::string reward_prefix_alias_;  // the alias older builds used (reward address prefix)
     std::string legacyLocalAlias() const;
     
     // Genesis node detection (informational only; logged by initializeWork)
@@ -476,7 +476,7 @@ private:
     // MPC handlers
     void handleKeyClaimRequest(const std::string& peer_alias, const std::string& payload);
     void handleKeyClaimChallenge(const std::string& peer_alias, const std::string& payload);
-    // PR 80: a KEYPROOF whose public key is a defined puzzle's key proves that
+    // A KEYPROOF whose public key is a defined puzzle's key proves that
     // puzzle solved; peer_id (0: none) is not relayed back to.
     void handleKeyProof(const std::string& peer_alias, const std::string& payload, uint64_t peer_id = 0);
     void handlePsbtProposal(const std::string& peer_alias, const std::string& payload);
@@ -492,19 +492,19 @@ private:
     bool isChunkClaimedBy(const std::string& chunk_id, const std::string& proposer_id) const;
     void forgetClaimsOfPeer(const std::string& alias);
     bool aliasStillConnected(const std::string& alias) const;
-    // Cleanup when a peer's connection is gone (PR 16: only once its last one is).
+    // Cleanup when a peer's connection is gone (only once its last one is).
     void releaseLostPeer(const std::string& alias);
     // Caller holds peers_mutex_: removes the links idle for 300 s and returns
     // their aliases (each once) for releaseLostPeer.
     std::vector<std::string> evictIdlePeersLocked(std::chrono::steady_clock::time_point now);
     // sender_peer_id: the connection it arrived on (0: unknown, e.g. tests),
-    // whose AUTH state decides how the completion is trusted (PR 20).
+    // whose AUTH state decides how the completion is trusted.
     void handleChunkDone(const std::string& peer_alias, const std::string& payload, uint64_t sender_peer_id = 0);
-    // PR 23: CONTRIB and CONTRIBSNAP under the peer-auth rules.
+    // CONTRIB and CONTRIBSNAP under the peer-auth rules.
     void handleContrib(const std::string& peer_alias, const std::string& payload, uint64_t sender_peer_id = 0);
     void handleContribSnapshot(const std::string& peer_alias, const std::string& payload);
     static void decrementCountLocked(std::unordered_map<std::string, int>& counts, const std::string& alias);
-    // Claim state key (PR 12): chunk ids are per-node counters and collide
+    // Claim state key: chunk ids are per-node counters and collide
     // across nodes, so a claim is identified by (chunk_id, proposer).
     static std::string claimKey(const std::string& chunk_id, const std::string& proposer_id);
     static bool rangesOverlap(const std::string& a_start, const std::string& a_end,
@@ -514,7 +514,7 @@ private:
     void expirePendingChunkClaims();
 
     mutable std::mutex consensus_mutex_;
-    // PR 82: when each block was last requested (re-requested after a timeout).
+    // When each block was last requested (re-requested after a timeout).
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> requested_blocks_;
     static constexpr auto kBlockRequestTimeout = std::chrono::seconds(30);
     static constexpr size_t kSyncHeadersBatch = 64;  // handleGetBlocks page size (same on older nodes)
@@ -527,7 +527,7 @@ private:
     size_t block_orphan_count_ = 0;
     static constexpr size_t kMaxBlockOrphans = 4096;
 
-        // Chunk claim consensus state (PR 64: types and containers in ChunkClaimBook.h)
+        // Chunk claim consensus state (types and containers in ChunkClaimBook.h)
         using ChunkClaimProposal = chunk_claim::Proposal;
         using ClaimLease = chunk_claim::Lease;
         using BufferedVote = chunk_claim::BufferedVote;
@@ -566,12 +566,12 @@ private:
 
     // Auto-continue helpers
     bool autoContinueRange();
-    // PR 30: auto-continue only if the current range has no unassigned work
+    // Auto-continue only if the current range has no unassigned work
     // left (re-checked under auto_continue_mutex_, so the claim retry loop and
     // onWorkDepleted cannot both advance the range).
     bool autoContinueIfExhausted();
     std::mutex auto_continue_mutex_;
-    // PR 34: chunks other peers still held in a range we auto-continued
+    // Chunks other peers still held in a range we auto-continued
     // out of. If the holder drops or its claim expires, the range goes back
     // to our coordinator (WorkCoordinator::addOrphanedRange) so its keys are
     // not lost; a completion from anyone stops tracking it.
@@ -598,22 +598,22 @@ private:
                                 uint64_t chunk_size);
     std::vector<std::pair<std::string, std::string>> collectRetiredRangesFromState() const;
 
-    using ContributionClaim = ::ContributionClaim;  // PR 62: see ContributionSigner.h
-    // PR 20: CHUNKDONE acceptance by signing key.
+    using ContributionClaim = ::ContributionClaim;  // See ContributionSigner.h
+    // CHUNKDONE acceptance by signing key.
     enum class ChunkDoneVerdict { Credit, ScheduleOnly, Reject };
-    // key_bound (PR 23): set true when the claim key is the alias's own bound
+    // key_bound: set true when the claim key is the alias's own bound
     // key (handshake, pin, or ours), false for a self-certified credit.
     ChunkDoneVerdict judgeChunkDone(const ContributionClaim& claim, uint64_t sender_peer_id,
                                     const std::string& fallback_alias, std::string& why,
                                     bool* key_bound = nullptr) const;
-    // Records a verified-or-not completion (PR 13/20 rules), shared by
-    // CHUNKDONE and, since PR 23, signed CONTRIB.
+    // Records a verified-or-not completion, shared by
+    // CHUNKDONE and signed CONTRIB.
     void applyCompletion(const ContributionClaim& claim, bool rewarded, const std::string& why);
     // The key that must have signed completions for this alias: ours for our
     // own alias, else its pin; "" when unknown.
     std::string expectedKeyForAlias(const std::string& alias) const;
 
-    // Contribution signing helpers (PR 62: thin wrappers over contribution_signer)
+    // Contribution signing helpers (thin wrappers over contribution_signer)
     void ensureContributionIdentity();
     std::string canonicalizeContribution(const ContributionClaim& claim) const;
     std::string signContribution(const ContributionClaim& claim) const;
@@ -630,7 +630,7 @@ private:
                                                           const std::vector<RewardSystem::PeerContribution>* contributions,
                                                           uint64_t total_keys);
 
-    // PR 47: the direct payout as a job. A failed balance lookup, build,
+    // The direct payout as a job. A failed balance lookup, build,
     // broadcast or confirmation check is retried with exponential backoff
     // (config payout_retry_initial_s .. payout_retry_max_s); the signed
     // transaction is journaled in the found-key file before it is sent and
@@ -665,16 +665,16 @@ private:
     std::vector<PayoutOutput> payoutOutputsOf(const std::string& tx_hex, const std::string& target) const;
     std::string foundKeyDir() const;
     void advanceAfterFind(bool probe_balances);
-    // PR 48: puzzles this node solved itself, from its found-key files
+    // Puzzles this node solved itself, from its found-key files
     // (puzzle number -> solver address). A record whose target= is not the
-    // puzzle's current address is ignored; one without target= (pre-PR 47)
+    // puzzle's current address is ignored; one without target= (older versions)
     // counts for the puzzle's own address.
     std::map<uint32_t, std::string> puzzlesSolvedHere() const;
-    // PR 48: marks those puzzles solved and, if the current puzzle is one of
+    // Marks those puzzles solved and, if the current puzzle is one of
     // them, moves to the next defined puzzle (in order) not solved here.
     // With reinitialize the keyspace is initialized for it (as at find time).
     bool skipPuzzlesSolvedHere(bool reinitialize);
-    // PR 50: shared by startup and find time. The next defined puzzle after
+    // Shared by startup and find time. The next defined puzzle after
     // `current` not in `solved`, or 0 (after a warning) if none is left.
     uint32_t nextPuzzleNotSolvedHere(uint32_t current, const std::map<uint32_t, std::string>& solved) const;
     // TARGET/TARGETBIN: whether a peer-sent hash160 is the current local puzzle's target.
@@ -692,21 +692,21 @@ private:
     std::chrono::milliseconds payout_confirm_poll_{2000};
     std::string createPsbtFromPayouts(const std::string& puzzle_address,
                                       const std::vector<PayoutOutput>& outputs);
-    // PR 44: this node's partial signature for an MPC proposal, "" if it
+    // This node's partial signature for an MPC proposal, "" if it
     // must not sign. Caller must not hold mpc_mutex_.
     std::string signMpcProposal(const std::string& psbt_id, const std::string& psbt);
     void shareMpcPartial(const std::string& psbt_id, const std::string& psbt);  // sign, store, broadcast
     bool checkPsbtThresholdMet(const std::string& psbt_id);
     std::string finalizePsbtForBroadcast(const std::string& psbt_id);
-    // PR 37: after an MPC payout tx is broadcast, send the same PAYOUT
+    // After an MPC payout tx is broadcast, send the same PAYOUT
     // notification the single-key path sends, with what the tx actually pays
-    // (decoded from it; change back to the puzzle address excluded). PR 41:
+    // (decoded from it; change back to the puzzle address excluded).
     // once per txid, not if another node's PAYOUT for it was already applied.
     // Caller must not hold mpc_mutex_. True if a notification went out.
-    bool announceMpcPayout(const std::string& final_tx_hex);  // PR 41: without mpc_mutex_
-    // PR 41: apply a payout announcement once (stop work, mark solved, push
+    bool announceMpcPayout(const std::string& final_tx_hex);  // Without mpc_mutex_
+    // Apply a payout announcement once (stop work, mark solved, push
     // the solved event). False if this payout was applied already.
-    // PR 80: for `puzzle`; only the local MPC finisher (local) stops the
+    // For `puzzle`; only the local MPC finisher (local) stops the
     // engine here. A peer's PAYOUT is applied only once its puzzle is
     // verifiably solved (onPeerPayout).
     bool applyPayoutNotice(const std::vector<PayoutOutput>& outputs, const std::string& from_alias, bool local,
@@ -729,11 +729,11 @@ private:
     // MPC/HSM support: track pending PSBT signatures
     mutable std::mutex mpc_mutex_;
     std::unordered_map<std::string, std::vector<std::string>> mpc_partial_sigs_; // psbt_id -> partial sigs
-    std::mutex payout_seen_mutex_;                          // PR 41
+    std::mutex payout_seen_mutex_;
     std::unordered_set<std::string> payout_txids_announced_;  // MPC payout txids this node announced
     std::unordered_set<std::string> payouts_applied_;         // payoutKey() of payouts applied here
     std::unordered_map<std::string, std::string> mpc_psbts_; // psbt_id -> psbt_hex
-    // PR 44: the found puzzle key, on the finder only (onKeyFound in MPC
+    // The found puzzle key, on the finder only (onKeyFound in MPC
     // mode). It is the only key that controls the payout's inputs (the puzzle
     // address); no key shares exist. Never logged or sent.
     std::string mpc_signing_key_;
@@ -750,7 +750,7 @@ private:
     std::string contribution_pubkey_hex_;
     mutable std::mutex contribution_mutex_;
 
-    // PR 80: peers can no longer switch this node's puzzle. PUZZLEADV,
+    // Peers can no longer switch this node's puzzle. PUZZLEADV,
     // PAYOUT and STATE are advisory: the node leaves its current puzzle only
     // when that puzzle is verifiably solved - a found key here (found-key
     // file), a published key (puzzle table), a KEYPROOF signed by the

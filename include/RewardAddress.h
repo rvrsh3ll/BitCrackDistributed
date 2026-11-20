@@ -19,7 +19,7 @@ struct Resolution {
     std::string address;      // trimmed, possibly empty
     Source source = Source::None;
     bool needs_prompt = true; // true when `address` is missing or invalid
-    std::string error;        // PR 31: why `address` is invalid ("" if valid or empty)
+    std::string error;        // Why `address` is invalid ("" if valid or empty)
 };
 
 std::string trim(const std::string& s);
@@ -28,7 +28,7 @@ std::string trim(const std::string& s);
 // "1YourBitcoinAddress" or "bc1...", and at least 26 characters.
 bool isPlausible(const std::string& address);
 
-// PR 31: strict validation (checksums, version/HRP, network): "" if valid.
+// Strict validation (checksums, version/HRP, network): "" if valid.
 std::string validate(const std::string& address, BitcoinNetwork network);
 
 Resolution resolve(const std::string& config_value, const std::string& cli_override,

@@ -1,4 +1,4 @@
-// PR 63: chunk-claim verb payloads (CHUNKCLAIMPROPOSAL / CHUNKCLAIMVOTE /
+// Chunk-claim verb payloads (CHUNKCLAIMPROPOSAL / CHUNKCLAIMVOTE /
 // CHUNKCLAIMAPPROVED) encoded and decoded by WireCodec, byte-identical to
 // the strings NetworkManager built inline before.
 #include <catch2/catch_test_macros.hpp>

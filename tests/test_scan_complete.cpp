@@ -285,3 +285,35 @@ TEST_CASE("C4: 8 threads - the node records/sends CHUNKDONE only once scanned ke
         CHECK(checked_at_send == kChunk);
     }
 }
+
+TEST_CASE("C9: engine on a different range than the current chunk is moved to it, not left idle",
+          "[scan_complete][engine_resync]") {
+    Quiet quiet;
+    TempDir t;
+    fs::create_directories(t.dir / "node");
+    const Config ecfg = engineConfig(t);
+    ResourceMonitor monitor(ecfg);
+    BitCrackEngine engine(ecfg, &monitor);
+    engine.setBatchSizeForTest(kBatch);
+    engine.addTarget("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2");
+    {
+        const uint64_t kChunk = 256ull * kBatch;
+        NetworkManager nm(nodeConfig(t), &engine);
+        nm.initializeWork("1TestAddr", "4000000000000000000", "4000000000000FFFFFF", kChunk);
+        nm.addFakeConnectedPeerForTest(kPeer);
+        const std::string me = nm.getLocalAlias();
+
+        WorkChunk own = claimOwn(nm);
+        REQUIRE(engine.getCurrentRange().start == own.start_key);
+        // A second approval applied concurrently: the node's current chunk is
+        // now B while the engine keeps scanning A.
+        const std::string b_start = "4000000000000F00000";
+        const std::string b_end = endOf(b_start, kChunk);
+        NTA::setCurrentChunk(nm, "chunk_B", b_start, b_end);
+
+        // The engine finishes A, signals; the node must move it to B and B completes.
+        REQUIRE(waitFor([&] { return NTA::workState(nm).isCompleted(me, b_start, b_end); }));
+        CHECK_FALSE(NTA::workState(nm).isCompleted(me, own.start_key, own.end_key));
+        engine.stop();
+    }
+}

@@ -183,7 +183,7 @@ endif()
 target_compile_definitions(NetworkLayer PRIVATE 
     $<$<CONFIG:Debug>:NETWORK_DEBUG>
 )
-# PR 83: short commit for the stats API (/status "commit"). A source tarball
+# Short commit for the stats API (/status "commit"). A source tarball
 # can carry it in a top-level .commit file; otherwise ask git at configure time.
 set(BCD_BUILD_COMMIT "unknown")
 if(EXISTS ${CMAKE_SOURCE_DIR}/.commit)

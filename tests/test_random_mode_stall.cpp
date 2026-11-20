@@ -1,4 +1,4 @@
-// PR 11: random-mode stall ("node takes the final chunk and then gets no more work").
+// Random-mode stall ("node takes the final chunk and then gets no more work").
 //
 // randomHexOffset() drew a full random byte for the leading byte even when the
 // max offset's leading byte was small (e.g. 0x01), so most draws were rejected;
@@ -115,7 +115,7 @@ TEST_CASE("Random mode hands out every key of small gaps, including the trailing
     for (uint64_t seed = 100; seed < 140; ++seed) {
         WorkCoordinator wc;
         wc.initializeKeyspace("t", "00", "FF", 0x10);
-        // Gaps of 7, 16 and 3 keys: 39-3F, 80-8F, FD-FF (same as the PR 4 test).
+        // Gaps of 7, 16 and 3 keys: 39-3F, 80-8F, FD-FF (same as the earlier test).
         wc.markCompletedFromState("a", "00", "38", 0x39);
         wc.markCompletedFromState("b", "40", "7F", 0x40);
         wc.markCompletedFromState("c", "90", "FC", 0x6D);

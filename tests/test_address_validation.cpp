@@ -1,11 +1,11 @@
-// PR 31: strict reward/payout address validation.
+// Strict reward/payout address validation.
 //
 // BitcoinWallet::isValidAddress was a shape check: any 26+ character string
 // of Base58 characters starting with 1 or 3, or anything starting with
 // "bc1"/"tb1", passed, with no checksum and no network check. A typo'd
 // reward address was accepted from the config, the CLI prompt and peers
 // (REWARDADDR / PEERADDR right after HELLO), and the payout to it would
-// fail or burn the share. It now uses the PR 29 decoder: Base58Check and
+// fail or burn the share. It now uses the shared decoder: Base58Check and
 // bech32/bech32m checksums, version byte / HRP, witness program, network.
 #include <catch2/catch_test_macros.hpp>
 

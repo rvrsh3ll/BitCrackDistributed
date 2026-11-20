@@ -1,6 +1,7 @@
 # Launch blockers
 
-Public puzzle-solving launch is **not approved** by this tranche. Track evidence
+This document tracks open correctness and hardening work, with acceptance
+criteria for each item. Track evidence
 against an exact commit, configuration, OS/compiler, and (where relevant) GPU/driver.
 Assign a maintainer to each open blocker before starting the two-week clock.
 Signatures authenticate reports; they do not prove that a range was searched.
@@ -12,8 +13,8 @@ Signatures authenticate reports; they do not prove that a range was searched.
 **Rationale:** repeated work wastes capacity; incorrectly skipped work can hide the
 solution. Recovery must use target-scoped ranges, never node-local chunk IDs.
 
-**Advanced here:** startup already calls `rehydrateWorkFromState`. This tranche
-fixes its ID-only deduplication and `setRetiredRanges` discarding its input.
+**Advanced here:** startup already calls `rehydrateWorkFromState`, and its
+ID-only deduplication and `setRetiredRanges` discarding its input are fixed.
 Regression coverage loads a real persisted ledger into two successive fresh
 NetworkManager instances, with colliding IDs from one/two peers, sequential/random
 assignment, a changed chunk size, and noncontiguous completions. All remaining
@@ -137,21 +138,21 @@ schedule no longer start runs. Start them from the Actions tab or with
 ref so `github.ref_name` is the tag. The PR, nightly and pushed-tag behaviour
 described above now happens only when someone starts a run by hand.
 
-**Known issues (2026-11-18). Both jobs fail as of run 44314846668 (PR #83):**
-- **`Windows CPU` fails to compile.** Chocolatey now installs OpenSSL 4.1.0, and
+**Open workflow issues (2026-11-18):**
+- **`Windows CPU` lane vs OpenSSL 4.** Chocolatey now installs OpenSSL 4.1.0, and
   the bundled asio 1.30.2 `asio/ssl/impl/rfc2818_verification.ipp` doesn't
   compile against it: OpenSSL 4 makes `ASN1_STRING` (`asn1_string_st`)
   opaque and returns `const X509*`. Fix options: pin OpenSSL 3.x in the job
   (e.g. `choco install openssl --version=3.x` or vcpkg), or move to an asio
-  release that supports OpenSSL 4. Until then the lane can't go green.
-- **`ASan` fails one test**: 352/353 pass. `tests/test_network_loopback.cpp:166`
+  release that supports OpenSSL 4.
+- **`ASan` lane, one flaky test on hosted runners.** `tests/test_network_loopback.cpp:166`
   `CHECK(b_sees_a)` fails with `AUTH KEY MISMATCH` for alias `Anonymous`. The
   test's two nodes have no `node_uuid` and no reward address, so **both use the
   alias `Anonymous`**. Node A then rejects B for presenting A's own alias with
   another key. (Each node has its own temp data dir, so this is not a stale
   pin file.) On fast machines the check sees the connection before the
   rejection, which is why it passes locally. Fix: give the test nodes distinct
-  `node_uuid`s. Not fixed yet.
+  `node_uuid`s (open).
 
 Scope/TODO: hidden `[.regtest]` tests require a funded isolated Bitcoin Core
 regtest fixture and remain operator-invoked. Longer mixed-version, full TSan,

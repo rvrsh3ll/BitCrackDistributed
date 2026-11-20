@@ -1,4 +1,4 @@
-// Verification suite for the native secp256k1 CPU scan kernel (WP1).
+// Verification suite for the native secp256k1 CPU scan kernel.
 //
 // Layers:
 //   1. Known-answer tests for the vendored SHA-256 / RIPEMD-160.

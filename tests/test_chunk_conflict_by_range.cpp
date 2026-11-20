@@ -1,4 +1,4 @@
-// PR 12: chunk-claim conflicts are decided by range overlap, not chunk id.
+// Chunk-claim conflicts are decided by range overlap, not chunk id.
 //
 // Chunk ids are per-node counters (chunk_00000000, ...), so two nodes
 // routinely propose different ranges under the same id. The conflict check
@@ -300,7 +300,7 @@ TEST_CASE("PR12: WorkCoordinator reserve/drop bookkeeping", "[pr12][work_coordin
         CHECK(HexMath::compare(b->start_key, "018") == 0);
         // Released with the peer.
         wc.releaseAssignmentsForPeer("peerX");
-        // PR 42: the frontier already skipped it, so it is requeued (it used
+        // The frontier already skipped it, so it is requeued (it used
         // to be lost) and handed out exactly once; nothing else repeats.
         int released_hits = 0, others = 0;
         for (int i = 0; i < 64; ++i) {

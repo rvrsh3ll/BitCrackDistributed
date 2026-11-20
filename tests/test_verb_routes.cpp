@@ -1,6 +1,6 @@
-// PR 69: handlePeerMessageById dispatches through a verb table instead of an
+// handlePeerMessageById dispatches through a verb table instead of an
 // if/else chain. These pin the table to the verbs the chain handled and check
-// verb normalization, unknown verbs and the PR 19 claim-traffic gate through
+// verb normalization, unknown verbs and the claim-traffic gate through
 // the full dispatch path.
 #include <catch2/catch_test_macros.hpp>
 
@@ -93,7 +93,7 @@ const std::string kPeer = "6a6a6a6a6a6a";
 }  // namespace
 
 TEST_CASE("PR69: the verb table holds exactly the verbs the if/else chain handled", "[pr69][dispatch]") {
-    // The chain's verbs in its order; true = behind the PR 19 claim gate.
+    // The chain's verbs in its order; true = behind the claim gate.
     const std::map<std::string, bool> expected = {
         {"PING", false}, {"PONG", false}, {"STATE_REQUEST", false}, {"STATE", false},
         {"TARGET", false}, {"TARGETBIN", false}, {"KEYFOUND", false}, {"PAYOUT", false},

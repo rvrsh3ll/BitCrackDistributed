@@ -45,11 +45,11 @@ public:
     // Request work for a peer (returns a copy of WorkChunk, thread-safe)
     // Returns std::optional<WorkChunk> - empty if no work available
     std::optional<WorkChunk> assignWork(const std::string& peer_alias);
-    // PR 27: whether assignWork() could hand out a chunk of this range now
+    // Whether assignWork() could hand out a chunk of this range now
     // (an unassigned active chunk, a requeued range, or keys left past the
     // frontier / in a gap). False also when uninitialized.
     bool hasUnassignedWork() const;
-    // PR 34: ranges from a range we already left (auto-continue) whose holder
+    // Ranges from a range we already left (auto-continue) whose holder
     // dropped or whose claim expired. Handed out before anything else, even
     // though they lie outside the current keyspace, so their keys are not
     // lost. Skipped if retired by then.
@@ -75,11 +75,11 @@ public:
     void releaseAssignmentsForPeer(const std::string& peer_alias);
     // Release a specific chunk's assignment (keeps it available for reassignment)
     void releaseAssignmentForChunk(const std::string& chunk_id);
-    // PR 12: a range claimed (approved) by another node. Never assigned
+    // A range claimed (approved) by another node. Never assigned
     // locally; does not count as completed.
     // Released again by releaseAssignmentsForPeer(owner).
     void reserveRange(const std::string& start_hex, const std::string& end_hex, const std::string& owner);
-    // PR 12: forget an active, uncompleted chunk (our claim for it lost an
+    // Forget an active, uncompleted chunk (our claim for it lost an
     // overlap), so its range is free again. Returns false if unknown/completed.
     bool dropChunk(const std::string& chunk_id);
     // Our own claim for this chunk expired unapproved: forget the chunk
@@ -88,9 +88,9 @@ public:
     // range again as a free gap; sequential mode keeps it as a left-behind
     // range. Nothing is kept once the range has been completed elsewhere.
     bool abandonChunk(const std::string& chunk_id);
-    // PR 12: undo reserveRange for a claim that ended up rejected or expired.
+    // Undo reserveRange for a claim that ended up rejected or expired.
     void unreserveRange(const std::string& start_hex, const std::string& end_hex, const std::string& owner);
-    // PR 42: drop a reservation whose claim expired and hand the free part
+    // Drop a reservation whose claim expired and hand the free part
     // of its range out again (if it lies in the current keyspace). True if a
     // reservation was removed.
     bool releaseReservedRange(const std::string& start_hex, const std::string& end_hex, const std::string& owner);
@@ -139,7 +139,7 @@ private:
     void removeRetiredRangeLocked(const std::string& start_hex, const std::string& end_hex);
     std::optional<WorkChunk> emitChunkLocked(const std::string& chunk_start, const std::string& chunk_end,
                                              const std::string& peer_alias);
-    void requeueReleasedLocked(const std::string& s, const std::string& e);  // PR 42
+    void requeueReleasedLocked(const std::string& s, const std::string& e);
     bool takeRequeuedLocked(std::string& chunk_start, std::string& chunk_end);
     bool isRangeRetiredLocked(const std::string& start_hex, const std::string& end_hex) const;
     std::string clampBeforeOccupiedLocked(const std::string& start_hex, const std::string& end_hex) const;
@@ -179,17 +179,17 @@ private:
 
     // Retired ranges that must not be reassigned (persisted ledger)
     std::vector<std::pair<std::string, std::string>> retired_ranges_;
-    // Ranges claimed by other nodes (PR 12): occupied, but not completed.
+    // Ranges claimed by other nodes: occupied, but not completed.
     struct ReservedRange {
         std::string start;
         std::string end;
         std::string owner;
     };
     std::vector<ReservedRange> reserved_ranges_;
-    // Ranges of dropped chunks to hand out again (PR 12), and the ids of
+    // Ranges of dropped chunks to hand out again, and the ids of
     // chunks cut from them (not requeued a second time).
     std::deque<std::pair<std::string, std::string>> requeued_ranges_;
-    std::deque<std::pair<std::string, std::string>> orphaned_ranges_;  // PR 34
+    std::deque<std::pair<std::string, std::string>> orphaned_ranges_;
     std::unordered_set<std::string> no_requeue_ids_;
 
     // Random assignment state

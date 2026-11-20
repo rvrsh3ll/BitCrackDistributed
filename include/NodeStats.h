@@ -1,6 +1,6 @@
 #pragma once
 
-// PR 83: read-only node statistics for the stats API (/status, /peers,
+// Read-only node statistics for the stats API (/status, /peers,
 // /chunks) and the periodic one-line log summary. Everything here only reads
 // from the engine and the network manager; nothing is changed.
 // Never put private keys, found keys or RPC credentials in these views.

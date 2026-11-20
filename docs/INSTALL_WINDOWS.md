@@ -10,12 +10,10 @@
 > doesn't affect MSVC), but that isn't a real MSVC build. Please report what
 > you hit (exact error text and the step).
 
-> **GPU status: `main` searches on the CPU.** The real CUDA search kernel lives in
-> the unmerged PRs #74, #75 and #76 (branches `cuda-1-field-math`,
-> `cuda-2-ec-points` and `cuda-3-kernel-integration`). It isn't merged until it
-> has been verified on real hardware. On `main`, an RTX 5080 isn't used for
-> searching. See [Testing the CUDA kernel](#testing-the-cuda-kernel-pr-76) to
-> help verify it.
+> **GPU status: `main` searches on the CPU.** The real CUDA search kernel is in
+> development on a separate branch (`cuda-3-kernel-integration`). It isn't merged
+> until it has been verified on real hardware. On `main`, an RTX 5080 isn't used
+> for searching. See [Testing the CUDA kernel](#testing-the-cuda-kernel).
 
 Everything below was checked against the repository's `CMakeLists.txt`,
 `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `gpu/CMakeLists.txt` and
@@ -203,15 +201,16 @@ curl.exe -s http://127.0.0.1:3339/chunks
 The node also logs a `Stats:` line every 60 s. Fields are listed in the
 README's "Stats API" section.
 
-## Testing the CUDA kernel (PR #76)
+## Testing the CUDA kernel
 
-For testers who want to help verify the GPU search on the RTX 5080. The
-`cuda-3-kernel-integration` branch:
+For testers who want to help verify the GPU search on the RTX 5080. The CUDA
+development branch (`cuda-3-kernel-integration`, not part of the public release
+yet):
 - adds the real kernel, `bitcrack_tests "[gpu]"` and `--gpu-bench`;
 - sets `BITCRACK_CUDA_ARCH` (default `75;86;89;120`, so it includes `sm_120`);
 - fails configure clearly if `120` is requested with a toolkit older than 12.8.
 
-The branch forks from an **older `main`** (before PRs #77–#83: P2P targets,
+The branch forks from an **older `main`** (before the P2P targets,
 DNS bootstrap, puzzle trust, chainstore restart, block sync, stats API). Use it
 for the GPU tests and benchmark below, **not** for joining the public seeds.
 
@@ -244,8 +243,8 @@ for the GPU tests and benchmark below, **not** for joining the public seeds.
    ```
    The branch links the shared CUDA runtime, so `cudart64_12.dll` (`cudart64_13.dll` with CUDA 13) must be on
    PATH. The CUDA installer adds `%CUDA_PATH%\bin`.
-4. Please report the test summary, the `--gpu-bench` Mkeys/s, and any errors on
-   PR #76. Details are in `docs/CUDA_KERNEL.md` on that branch.
+4. Please report the test summary, the `--gpu-bench` Mkeys/s, and any errors.
+   Details are in `docs/CUDA_KERNEL.md` on that branch.
 
 ## Troubleshooting
 

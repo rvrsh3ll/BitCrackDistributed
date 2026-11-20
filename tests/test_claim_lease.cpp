@@ -1,4 +1,4 @@
-// PR 42: an approved claim held by another node has a lease. The holder
+// An approved claim held by another node has a lease. The holder
 // renews it by completing chunks (CHUNKDONE); if it completes nothing for
 // the lease, the claim is dropped and its range is handed out again, so a
 // peer that stays connected but stalls cannot sit on keys forever. The lease

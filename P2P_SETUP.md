@@ -215,10 +215,10 @@ Peers use a line-based text protocol. Main verbs (the full list is in
 - `CHUNKCLAIMPROPOSAL` / `CHUNKCLAIMVOTE` / `CHUNKCLAIMAPPROVED`: chunk claims by vote
 - `CHUNKDONE`, `CONTRIB`: signed completions
 - `GETBLOCKS` / `HEADERS` / `GETDATA` / `BLOCK` / `BLOCKDATA`: block sync
-- `KEYFOUND` / `KEYPROOF`, `PUZZLEADV`, `PAYOUT`: a find is announced without the key and proven with a signature; peers act on it only when it verifies (#80)
+- `KEYFOUND` / `KEYPROOF`, `PUZZLEADV`, `PAYOUT`: a find is announced without the key and proven with a signature; peers act on it only when it verifies
 
 Targets aren't taken from peers: each node loads the active puzzle's target from
-its own puzzle table (#78). The legacy `KEY:<private_key>|…` verb is still parsed
+its own puzzle table. The legacy `KEY:<private_key>|…` verb is still parsed
 but **never sent**; no private key goes over the network.
 
 ## Troubleshooting
@@ -263,7 +263,7 @@ For production deployments, consider:
 
 1. **Running dedicated bootstrap nodes** (always-on servers)
 2. **Using multiple bootstrap nodes** for redundancy
-3. **DNS-based bootstrap**: implemented (#79). A hostname with several A records is tried address by address, and `seed.bitcrack-distributed.org` is meant to carry one A record per seed (not live yet; the default list falls back to the raw IPs).
+3. **DNS-based bootstrap**: implemented. A hostname with several A records is tried address by address, and `seed.bitcrack-distributed.org` is meant to carry one A record per seed (not live yet; the default list falls back to the raw IPs).
 4. **Peer exchange**: `PEERADDR` gossip is implemented.
 
 ## Security Considerations
@@ -274,7 +274,7 @@ Current implementation:
 - ✅ Stats API is read-only, off by default, loopback-only unless `api_allow_remote`, and never returns keys or RPC credentials
 - ⚠️ **No encryption** - connections are plaintext TCP
 - ✅ Peer authentication after `HELLO` (`AUTHCHALLENGE`/`AUTH`, keys pinned per alias; `network.peer_auth` prefer/require/off). Signed `CHUNKDONE`/`CONTRIB`. Misbehaving peers are struck and dropped.
-- ✅ Peers can't switch a node's puzzle; only a verifiable solve does (#80)
+- ✅ Peers can't switch a node's puzzle; only a verifiable solve does
 - ⚠️ Any peer can still connect (auth identifies peers; it doesn't restrict who joins)
 - ⚠️ **No general rate limiting**: only strikes and per-node claim limits
 

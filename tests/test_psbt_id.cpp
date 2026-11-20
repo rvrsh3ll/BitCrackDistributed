@@ -1,4 +1,4 @@
-// PR 43: an MPC proposal's id is sha256d of the whole PSBT. It used to be the
+// An MPC proposal's id is sha256d of the whole PSBT. It used to be the
 // PSBT's first 16 characters, which nearly every PSBT shares, so a second
 // proposal overwrote the first and partial signatures were filed under the
 // wrong PSBT. A proposal seen before is not relayed or signed again (it used

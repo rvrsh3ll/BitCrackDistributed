@@ -1,4 +1,4 @@
-// PR 58: the stall-aware timer used by the tests' wall-clock upper bounds.
+// The stall-aware timer used by the tests' wall-clock upper bounds.
 // A box stall (the whole process not running) is excluded; a real hang (a
 // thread blocked while the process runs) is counted in full and, past the
 // hard limit, aborts the test binary.

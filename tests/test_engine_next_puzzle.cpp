@@ -1,4 +1,4 @@
-// PR 53: the standalone engine advances like the network flow (PR 48/50):
+// The standalone engine advances like the network flow:
 // to the next defined puzzle, in order, that this node has not solved per
 // its found-key files; with none left it stays put (idle) with a warning
 // instead of stepping onto an undefined puzzle.

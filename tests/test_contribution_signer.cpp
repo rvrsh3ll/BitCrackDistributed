@@ -1,4 +1,4 @@
-// PR 62: ContributionSigner and wire::splitFields, extracted from
+// ContributionSigner and wire::splitFields, extracted from
 // NetworkManager without behaviour or wire change.
 #include <catch2/catch_test_macros.hpp>
 

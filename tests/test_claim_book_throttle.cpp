@@ -1,4 +1,4 @@
-// PR 67: the claim throttle and per-proposer claimed check in ClaimBook
+// The claim throttle and per-proposer claimed check in ClaimBook
 // (moved from NetworkManager unchanged), with an injected clock.
 #include <catch2/catch_test_macros.hpp>
 

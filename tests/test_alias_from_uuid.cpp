@@ -1,4 +1,4 @@
-// PR 17: with a uuid configured, the node's alias comes from the uuid.
+// With a uuid configured, the node's alias comes from the uuid.
 //
 // The constructor derived the alias from node_uuid, but setRewardAddress()
 // (called at startup whenever a reward address is configured, i.e. always
@@ -195,7 +195,7 @@ TEST_CASE("PR24: completing a range an older build recorded under the address al
         });
         { std::ofstream f(dir / ("workstate_p" + std::to_string(puzzle) + ".json")); f << j.dump(2); }
         nm.initializeWork("1TestAddr", "400000000000000000", "4000000000000000FF", 16);
-        REQUIRE(TA::rewardKeys(nm, "111111111111") == 16);  // hydration (PR 17)
+        REQUIRE(TA::rewardKeys(nm, "111111111111") == 16);  // hydration
         // Not started and no peers: the next claim fails, and auto-continue
         // would move to a new range (and re-hydrate); keep this one.
         TA::setAutoContinue(nm, false);
@@ -245,7 +245,7 @@ TEST_CASE("PR17: peers see the uuid alias in HELLO", "[pr17][alias][loopback]") 
         };
         CHECK(waitUntil([&] { return sees(a, "bbbbbbbbbbbb") && sees(b, "aaaaaaaaaaaa"); },
                         std::chrono::seconds(8)));
-        // Claim participants once AUTH (PR 19) completes, a moment after HELLO.
+        // Claim participants once AUTH completes, a moment after HELLO.
         CHECK(waitUntil([&] { return TA::handshakenPeerCount(a) == 1 && TA::handshakenPeerCount(b) == 1; },
                         std::chrono::seconds(8)));
         b.stop();

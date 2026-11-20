@@ -1,4 +1,4 @@
-// PR 30: the idle claim retry loop moves on once the current range has no
+// The idle claim retry loop moves on once the current range has no
 // unassigned work left.
 //
 // A node that was waiting (e.g. for peers) while others took the rest of

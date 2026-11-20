@@ -1,4 +1,4 @@
-// PR 51: log lines reach the GUI's Logs tab on the GUI thread only.
+// Log lines reach the GUI's Logs tab on the GUI thread only.
 //
 // The Logger callback runs on whichever thread logged; MainWindow used to call
 // QPlainTextEdit::appendPlainText() right there, touching a widget off the GUI

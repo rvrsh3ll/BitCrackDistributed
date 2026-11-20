@@ -1,4 +1,4 @@
-// PR 9: engine restart race during shutdown.
+// Engine restart race during shutdown.
 //
 // main.cpp used to stop the engine before NetworkManager. A late
 // CHUNKCLAIMAPPROVED (e.g. on the peer's second loopback connection) then

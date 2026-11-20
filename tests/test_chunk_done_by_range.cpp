@@ -1,4 +1,4 @@
-// PR 13: chunk-done reports are matched by (peer, range), not bare chunk id.
+// Chunk-done reports are matched by (peer, range), not bare chunk id.
 //
 // Chunk ids are per-node counters that restart with every run, so the same
 // id names different ranges on different nodes. CHUNKDONE handling keyed on

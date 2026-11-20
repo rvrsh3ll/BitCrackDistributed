@@ -1,4 +1,4 @@
-// End-to-end found-key flow at the engine level (WP2/WP3):
+// End-to-end found-key flow at the engine level:
 //   - the real search workers (native kernel) find a planted key and report it
 //     through the key-found callback with the correct key and matched target,
 //   - after a find the engine is restartable through setSearchRange (regression
@@ -206,7 +206,7 @@ TEST_CASE("restartWithNextPuzzle advances the standalone engine past solved puzz
     // Fresh standalone engine starts on puzzle 71.
     REQUIRE(engine.currentPuzzleNumber() == 71);
 
-    // A found-key record (no target= field: counts for any target, pre-PR 47
+    // A found-key record (no target= field: counts for any target, pre-
     // style) marks puzzle 72 as solved by this node.
     PuzzleManager pm(71);
     PuzzleInfo p72;

@@ -1,4 +1,4 @@
-// PR 47: the direct payout survives backend failures and restarts.
+// The direct payout survives backend failures and restarts.
 //
 // A failed balance lookup is no longer read as an empty address; failed
 // lookups, broadcasts and confirmation checks are retried with exponential
@@ -799,7 +799,7 @@ TEST_CASE("PR47: Electrum backend: lookup failures and transaction state", "[pr4
 }
 
 // ---------------------------------------------------------------------------
-// PR 48: a restarted node does not search a puzzle it already solved itself.
+// A restarted node does not search a puzzle it already solved itself.
 // ---------------------------------------------------------------------------
 namespace {
 std::string definedAddress(uint32_t n) {
@@ -848,7 +848,7 @@ TEST_CASE("PR48: several found-key files: every puzzle solved here is skipped", 
     CapturedLogs logs;
     TempDir t;
     const uint32_t first = PuzzleManager().getCurrentPuzzleNumber();
-    writeSolved(t, first, "no_balance", "");  // written before PR 47 (no target=)
+    writeSolved(t, first, "no_balance", "");  // written by older versions (no target=)
     writeSolved(t, first + 1, "payout_confirmed", definedAddress(first + 1));
     writeSolved(t, first + 4, "payout_inputs_spent", definedAddress(first + 4));
 
@@ -942,7 +942,7 @@ TEST_CASE("PR48: start() skips a solved current puzzle and the payout still arri
 }
 
 // ---------------------------------------------------------------------------
-// PR 50: after a find, the sequential advance skips puzzles solved here too.
+// After a find, the sequential advance skips puzzles solved here too.
 // ---------------------------------------------------------------------------
 TEST_CASE("PR50: a find on N moves past puzzles this node already solved", "[pr50][payout]") {
     CapturedLogs logs;
@@ -967,7 +967,7 @@ TEST_CASE("PR50: a find on N moves past puzzles this node already solved", "[pr5
     }
     SECTION("N+1 and N+2 solved here, backend up but no later puzzle has a balance: N+3") {
         writeSolved(t, first + 1, "payout_confirmed", definedAddress(first + 1));
-        writeSolved(t, first + 2, "no_balance", "");  // pre-PR 47 record
+        writeSolved(t, first + 2, "no_balance", "");  // older-version record
         Finder f(cfg);
         f.find();
         CHECK(TA::puzzleNumberForWork(*f.nm) == n + 3);

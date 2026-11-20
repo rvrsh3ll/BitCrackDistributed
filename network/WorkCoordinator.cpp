@@ -130,7 +130,7 @@ std::optional<WorkChunk> WorkCoordinator::assignWork(const std::string& peer_ali
         }
     }
 
-    // PR 12: free parts of dropped chunks (claims that lost an overlap) first.
+    // Free parts of dropped chunks (claims that lost an overlap) first.
     // Sequential mode never goes back below its frontier, so these would be
     // lost otherwise.
     {
@@ -146,7 +146,7 @@ std::optional<WorkChunk> WorkCoordinator::assignWork(const std::string& peer_ali
         }
     }
 
-    // PR 34: keys left behind in a range we already moved on from.
+    // Keys left behind in a range we already moved on from.
     while (!orphaned_ranges_.empty()) {
         auto& r = orphaned_ranges_.front();
         if (isRangeRetiredLocked(r.first, r.second)) { orphaned_ranges_.pop_front(); continue; }
@@ -355,7 +355,7 @@ void WorkCoordinator::markCompletedFromState(const std::string& chunk_id,
                                              uint64_t keys_in_chunk) {
     std::lock_guard<std::mutex> lock(mutex_);
     // If the chunk exists, mark it complete; otherwise account it and ignore active list.
-    // PR 13: only when the range matches too. Chunk ids are per-node
+    // Only when the range matches too. Chunk ids are per-node
     // counters, so a peer's chunk_00000003 is not our chunk_00000003; that
     // report used to erase our in-flight chunk and leave its range unretired.
     auto it = active_chunks_.find(chunk_id);
@@ -423,7 +423,7 @@ void WorkCoordinator::reassignStalledWork(uint32_t timeout_seconds) {
 void WorkCoordinator::releaseAssignmentsForPeer(const std::string& peer_alias) {
     std::lock_guard<std::mutex> lock(mutex_);
     size_t released = 0;
-    // Ranges the peer had claimed (PR 12) become available again.
+    // Ranges the peer had claimed become available again.
     const size_t before = reserved_ranges_.size();
     std::vector<ReservedRange> released_ranges;
     for (const auto& r : reserved_ranges_)
@@ -431,7 +431,7 @@ void WorkCoordinator::releaseAssignmentsForPeer(const std::string& peer_alias) {
     reserved_ranges_.erase(std::remove_if(reserved_ranges_.begin(), reserved_ranges_.end(),
                                           [&](const ReservedRange& r) { return r.owner == peer_alias; }),
                            reserved_ranges_.end());
-    // PR 42: the frontier skipped these spans; requeue the part behind it so
+    // The frontier skipped these spans; requeue the part behind it so
     // a disconnected holder's keys in the current range are not lost.
     for (const auto& r : released_ranges) requeueReleasedLocked(r.start, r.end);
     if (reserved_ranges_.size() != before) {
@@ -1034,12 +1034,12 @@ bool WorkCoordinator::releaseReservedRange(const std::string& start_hex, const s
 }
 
 void WorkCoordinator::requeueReleasedLocked(const std::string& s, const std::string& e) {
-    // PR 42: a released reservation's keys must be handed out again. The
+    // A released reservation's keys must be handed out again. The
     // sequential frontier skips reserved spans, so the part it already passed
     // would be lost; the part ahead of it is reached normally (requeueing that
     // too would hand it out twice). In random mode free gaps are found anyway
     // and takeRequeuedLocked skips what is active, so the whole range is
-    // queued to come first. Nothing outside the keyspace is handed out (PR 34
+    // queued to come first. Nothing outside the keyspace is handed out (
     // orphans cover a range we left).
     if (!initialized_ || isRangeRetiredLocked(s, e)) return;
     if (random_enabled_) {

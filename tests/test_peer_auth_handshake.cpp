@@ -1,4 +1,4 @@
-// PR 19: peer authentication handshake (AUTHCHALLENGE / AUTH after HELLO),
+// Peer authentication handshake (AUTHCHALLENGE / AUTH after HELLO),
 // the peer_auth policy (off / prefer / require), the older-peer fallback and
 // key pinning by alias.
 #include <catch2/catch_test_macros.hpp>
@@ -585,7 +585,7 @@ TEST_CASE("PR19: a mixed old/new pair still claims chunks (prefer + older peer)"
           "[pr19][peer_auth][loopback][legacy]") {
     QuietLogs quiet;
     // peer_auth=off never challenges and ignores AUTH*: on the wire it is an
-    // older (pre-PR 19) node.
+    // older node.
     for (int new_is_a = 0; new_is_a < 2; ++new_is_a) {
         INFO((new_is_a ? "new node accepts, old node dials" : "old node accepts, new node dials"));
         LoopbackPair lp(new_is_a ? "mixed_na" : "mixed_nb", new_is_a ? "prefer" : "off", new_is_a ? "off" : "prefer");

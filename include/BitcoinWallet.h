@@ -30,7 +30,7 @@ public:
         const std::string& puzzle_address,
         const std::string& private_key,
         const std::vector<PayoutOutput>& outputs,
-        // PR 32: if given, receives the outputs the signed transaction pays
+        // If given, receives the outputs the signed transaction pays
         // (after the fee and dust handling); empty on failure.
         std::vector<PayoutOutput>* paid_outputs = nullptr
     );
@@ -41,12 +41,12 @@ public:
         uint64_t value_satoshis;
     };
     std::vector<Utxo> listUnspentUTXOs(const std::string& address);
-    // PR 47: false if the lookup failed (no backend, node unreachable, RPC or
+    // false if the lookup failed (no backend, node unreachable, RPC or
     // Electrum error), so a failure is not mistaken for an empty address.
     bool tryListUnspentUTXOs(const std::string& address, std::vector<Utxo>& out);
-    // PR 35: the fee the payout paths use for n_in inputs of in_spk's type
+    // The fee the payout paths use for n_in inputs of in_spk's type
     // and n_out payee outputs (conservative: counts one change output).
-    // PR 40: with_change adds a change output to the estimate.
+    // with_change adds a change output to the estimate.
     static uint64_t estimatePayoutFee(size_t n_in, const std::vector<unsigned char>& in_spk, size_t n_out,
                                       bool with_change);
     std::string buildRawTransaction(const std::vector<Utxo>& utxos, const std::vector<PayoutOutput>& outputs, const std::vector<unsigned char>& scriptPubKey, uint64_t fee);
@@ -54,23 +54,23 @@ public:
     
     // Broadcast transaction to network
     bool broadcastTransaction(const std::string& signed_tx_hex);
-    // PR 47: as above; on failure *error gets the backend's reason (e.g.
+    // As above; on failure *error gets the backend's reason (e.g.
     // "txn-already-known", "bad-txns-inputs-missingorspent").
     bool broadcastTransaction(const std::string& signed_tx_hex, std::string* error);
     
     // Get balance of an address (0 if the lookup fails)
     uint64_t getAddressBalance(const std::string& address);
-    // PR 47: false if the lookup failed; true with balance (possibly 0) if
+    // false if the lookup failed; true with balance (possibly 0) if
     // the backend answered.
     bool tryGetAddressBalance(const std::string& address, uint64_t& balance);
 
-    // PR 47: where a signed transaction is. Unknown: the backend answered and
+    // Where a signed transaction is. Unknown: the backend answered and
     // does not know it (never broadcast, dropped, or confirmed with every
     // output spent and no index to find it); LookupFailed: no answer.
     enum class TxState { Unknown, InMempool, Confirmed, LookupFailed };
     TxState getTxState(const std::string& signed_tx_hex, int& confirmations);
     
-    // Validate Bitcoin address. PR 31: strict (checksums, version byte /
+    // Validate Bitcoin address. Strict (checksums, version byte /
     // HRP, witness program) and for this wallet's network (default mainnet).
     bool isValidAddress(const std::string& address) const;
     // "" if valid, else why not (for error messages).
@@ -112,17 +112,17 @@ public:
     std::string combineLocalPsbts(const std::vector<std::string>& partial_psbts_json);
     std::string finalizePsbtLocally(const std::string& psbt_json);
     std::string finalizePsbt(const std::string& psbt_hex, const std::string& combined_sig);
-    // PR 37: the outputs (value, scriptPubKey) of a raw transaction, legacy
+    // The outputs (value, scriptPubKey) of a raw transaction, legacy
     // or segwit serialization; false if it does not parse.
     struct TxOutput {
         uint64_t value_satoshis = 0;
         std::vector<unsigned char> script;
     };
     static bool decodeTxOutputs(const std::string& raw_tx_hex, std::vector<TxOutput>& out);
-    // PR 41: txid (display order hex) of a raw transaction, legacy or segwit
+    // txid (display order hex) of a raw transaction, legacy or segwit
     // (the witness is not part of the txid); "" if it does not parse.
     static std::string txidOf(const std::string& raw_tx_hex);
-    // PR 43: id of an MPC payout proposal: sha256d (hex) of the whole PSBT
+    // id of an MPC payout proposal: sha256d (hex) of the whole PSBT
     // as proposed. It used to be the PSBT's first 16 characters, which are
     // the same for nearly every PSBT ('{"inputs":[{"...' or "cHNidP8B..."),
     // so proposals overwrote each other. "" for an empty PSBT.
@@ -149,5 +149,5 @@ private:
     
     std::string rpcCall(const std::string& method, const std::string& params);
 
-    friend struct BitcoinWalletTestAccess;  // tests: raw RPC access (PR 29)
+    friend struct BitcoinWalletTestAccess;  // tests: raw RPC access
 };

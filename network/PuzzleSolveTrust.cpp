@@ -1,4 +1,4 @@
-// PR 80: which peer messages may move this node to another puzzle.
+// Which peer messages may move this node to another puzzle.
 //
 // A peer used to switch any node's active puzzle with one PUZZLEADV line
 // (any number, no check), stop its search and mark its puzzle solved with one

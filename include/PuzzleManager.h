@@ -24,7 +24,7 @@ public:
     ~PuzzleManager() = default;
     
     PuzzleInfo getCurrentPuzzle() const;
-    // PR 47: the definition of puzzle `puzzle_num`; false if not defined.
+    // The definition of puzzle `puzzle_num`; false if not defined.
     bool getPuzzle(uint32_t puzzle_num, PuzzleInfo& out) const;
     uint32_t getCurrentPuzzleNumber() const;
     void setCurrentPuzzle(uint32_t puzzle_num);
@@ -41,11 +41,11 @@ public:
                                 const std::string& target_address, const std::string& range_start,
                                 const std::string& range_end);
 
-    // PR 53 (moved from NetworkManager, PR 48/50; shared by the network flow
+    // Moved from NetworkManager (shared by the network flow
     // and the standalone engine):
     // Puzzles solved by this node per the found-key files in `dir` (puzzle
     // number -> solver address). A record whose target= is not the puzzle's
-    // current address is ignored; one without target= (pre-PR 47) counts.
+    // current address is ignored; one without target= (older versions) counts.
     std::map<uint32_t, std::string> puzzlesSolvedIn(const std::string& dir) const;
     // Marks those puzzles solved (in memory).
     void markSolved(const std::map<uint32_t, std::string>& solved);
@@ -54,7 +54,7 @@ public:
     uint32_t nextPuzzleNotIn(uint32_t current, const std::map<uint32_t, std::string>& solved) const;
     
 private:
-    friend struct NetworkManagerTestAccess;  // PR 46: tests point a puzzle at a test address
+    friend struct NetworkManagerTestAccess;  // tests point a puzzle at a test address
     void loadPuzzleDefinitions();
     std::string rangeStartForBits(uint32_t bits) const;
     std::string rangeEndForBits(uint32_t bits) const;

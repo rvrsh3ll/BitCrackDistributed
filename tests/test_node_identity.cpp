@@ -1,4 +1,4 @@
-// PR 18: persistent node key (node_key.json, 0600, never logged) and the
+// Persistent node key (node_key.json, 0600, never logged) and the
 // alias -> pubkey pinning store (known_peers.json).
 #include <catch2/catch_test_macros.hpp>
 

@@ -63,7 +63,7 @@ BOOL WINAPI consoleCtrlHandler(DWORD type) {
 }
 #else
 // Self-pipe: [0] read end polled by waiters, [1] write end used by the handler.
-// PR 31: atomic, because request() may create the pipe lazily (when
+// Atomic, because request() may create the pipe lazily (when
 // install() was not called) while another thread reads it in waitFor(); TSan
 // flagged the plain ints. Lock-free atomic loads are async-signal-safe.
 std::atomic<int> g_pipe[2] = {-1, -1};

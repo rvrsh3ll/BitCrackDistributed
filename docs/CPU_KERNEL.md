@@ -39,7 +39,7 @@ layer are parsed once per batch. Ranges are clamped to valid private keys
 `scanRange` checks the engine's `stop`/`paused` atomics at window boundaries
 (so `stop()` joins a worker within ~one window) and increments a
 `keys_done` atomic per window for live statistics. `refresh_targets` is called
-per window, preserving the PR 54 immutable-snapshot target semantics.
+per window, preserving the immutable-snapshot target semantics.
 
 ### Range completion accounting (C4)
 

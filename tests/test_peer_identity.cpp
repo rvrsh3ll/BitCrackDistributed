@@ -1,4 +1,4 @@
-// PR 2: peers are tracked by a stable, never-reused ID instead of their
+// Peers are tracked by a stable, never-reused ID instead of their
 // position in connected_peers_, and per-peer handler threads are reaped.
 #include <catch2/catch_test_macros.hpp>
 
@@ -85,7 +85,7 @@ int connectLoopback(uint16_t port) {
 
 template <typename Pred>
 bool waitUntil(Pred pred, std::chrono::milliseconds timeout) {
-    // PR 58: stall-free, sanitizer-scaled timeout (still bounded).
+    // Stall-free, sanitizer-scaled timeout (still bounded).
     return stall_aware::waitUntil(pred, timeout, 20ms);
 }
 
@@ -111,12 +111,12 @@ TEST_CASE("Peer disconnect does not shift a later message onto another peer", "[
     cfg_a.network.node_uuid = "aaaaaaaa-0000-0000-0000-000000000001";
     cfg_b.network.node_uuid = "bbbbbbbb-0000-0000-0000-000000000002";
     cfg_c.network.node_uuid = "cccccccc-0000-0000-0000-000000000003";
-    // This test is about which connection a message is applied to (PR 2),
+    // This test is about which connection a message is applied to,
     // not authentication: under peer_auth a second HELLO with another alias
     // is answered by an AUTH under the old alias and the connection is
     // dropped (auth_alias_mismatch, covered by the auth tests). That used to
     // land after this test's check only because peer reads slept 100 ms
-    // after every recv (removed in PR 82).
+    // after every recv (since removed).
     cfg_a.network.peer_auth = "off";
     cfg_b.network.peer_auth = "off";
     cfg_c.network.peer_auth = "off";
@@ -180,7 +180,7 @@ TEST_CASE("Peer disconnect does not shift a later message onto another peer", "[
         CHECK_FALSE(hasAlias(peers, alias_b));
 
         {
-            // PR 58: stall-free time, limit scaled for sanitizers; a real hang aborts.
+            // Stall-free time, limit scaled for sanitizers; a real hang aborts.
             stall_aware::StallAwareTimer timer("c.stop(); a.stop()");
             c.stop();
             a.stop();
@@ -231,7 +231,7 @@ TEST_CASE("Raw peer churn keeps per-peer threads and the peer list bounded", "[n
         CHECK(reaped);
 
         {
-            // PR 58: stall-free time, limit scaled for sanitizers; a real hang aborts.
+            // Stall-free time, limit scaled for sanitizers; a real hang aborts.
             stall_aware::StallAwareTimer timer("a.stop()");
             a.stop();
             timer.stop();
@@ -262,7 +262,7 @@ TEST_CASE("NetworkManager peer reconnecting repeatedly does not accumulate threa
             b.start();
             REQUIRE(waitUntil([&] { return hasAlias(a.getConnectedPeers(), b.getLocalAlias()); }, 8000ms));
             {
-                // PR 58: stall-free time, limit scaled for sanitizers; a real hang aborts.
+                // Stall-free time, limit scaled for sanitizers; a real hang aborts.
                 stall_aware::StallAwareTimer timer("b.stop()");
                 b.stop();
                 timer.stop();
@@ -275,7 +275,7 @@ TEST_CASE("NetworkManager peer reconnecting repeatedly does not accumulate threa
         INFO("threads left: " << NetworkManagerTestAccess::peerHandlerThreadCount(a));
         CHECK(reaped);
         {
-            // PR 58: stall-free time, limit scaled for sanitizers; a real hang aborts.
+            // Stall-free time, limit scaled for sanitizers; a real hang aborts.
             stall_aware::StallAwareTimer timer("a.stop()");
             a.stop();
             timer.stop();

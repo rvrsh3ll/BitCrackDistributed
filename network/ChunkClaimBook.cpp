@@ -27,7 +27,7 @@ void decrementCount(std::unordered_map<std::string, int>& counts, const std::str
     if (--it->second <= 0) counts.erase(it);
 }
 
-// PR 65: the decision parts of proposing, voting and tallying, moved from
+// The decision parts of proposing, voting and tallying, moved from
 // NetworkManager unchanged (same log lines). The caller holds the claim mutex.
 
 bool ClaimBook::addOwnProposal(const std::string& chunk_id, const std::string& start_key, const std::string& end_key,
@@ -67,10 +67,10 @@ ClaimBook::ProposalDecision ClaimBook::evaluateProposal(const std::string& chunk
     const std::string key = claimKey(chunk_id, proposer_id);
     bool duplicate = false;
     std::vector<std::string> dropped_own;  // our chunk ids whose claims lost
-    std::vector<Outcome> replayed;  // claims finalized by buffered votes (PR 14)
+    std::vector<Outcome> replayed;  // claims finalized by buffered votes
     // Remote proposals replaced by this one: (start, end, proposer).
     std::vector<std::tuple<std::string, std::string, std::string>> replaced_remote;
-    // PR 12: the same proposal arrives once per connection. Count and
+    // The same proposal arrives once per connection. Count and
     // vote on it once; a second pass used to double-increment
     // pending_count and could flip an approval into a reject.
     // A key with a different range is a fresh proposal under a reused
@@ -111,7 +111,7 @@ ClaimBook::ProposalDecision ClaimBook::evaluateProposal(const std::string& chunk
     }
 
     if (!duplicate && should_approve) {
-        // PR 12: conflicts are decided by range overlap, not chunk id.
+        // Conflicts are decided by range overlap, not chunk id.
         // Chunk ids are per-node counters, so two nodes routinely
         // propose different ranges under the same id.
         for (const auto& kv : claimed) {
@@ -219,7 +219,7 @@ Outcome ClaimBook::recordVote(const std::string& chunk_id, const std::string& pr
 Outcome ClaimBook::tally(std::unordered_map<std::string, Proposal>::iterator it, const VoterCount& voter_count,
                          const std::string& local_alias) {
     // Caller holds the claim mutex. Shared by live votes and replayed
-    // buffered votes (PR 14), so both finalize a claim the same way.
+    // buffered votes, so both finalize a claim the same way.
     Outcome out;
     const std::string key = it->first;
     auto& proposal = it->second;
@@ -240,7 +240,7 @@ Outcome ClaimBook::tally(std::unordered_map<std::string, Proposal>::iterator it,
         proposal.finalized = true;
         proposal.approved = true;
         claimed[key] = {proposal.start_key, proposal.end_key};
-        addLease(key, chunk_id, proposal.start_key, proposal.end_key, proposer_id, local_alias);  // PR 42
+        addLease(key, chunk_id, proposal.start_key, proposal.end_key, proposer_id, local_alias);
         out = Outcome{true, true, chunk_id, proposer_id, proposal.start_key, proposal.end_key};
         pending.erase(it);
         // Transfer from pending to claimed counts
@@ -252,7 +252,7 @@ Outcome ClaimBook::tally(std::unordered_map<std::string, Proposal>::iterator it,
         // Extend consensus timeout by 10 seconds when buffered votes are reprocessed for recovery
         timeout_extended = true;
     } else if (proposal.rejections.size() > (total_peers / 2) ||
-               // PR 10: also finalize once the outstanding votes can no
+               // Also finalize once the outstanding votes can no
                // longer reach min_approvals (with 2 nodes one REJECT
                // decides it). The claim used to sit pending until expiry,
                // blocking the idle retry.
@@ -321,7 +321,7 @@ std::vector<Outcome> ClaimBook::reprocessBufferedVotes(const VoterCount& voter_c
             proposal.rejections.insert(bv.peer_alias);
         }
         
-        // PR 14: finalize exactly like a live vote. The replay used to
+        // Finalize exactly like a live vote. The replay used to
         // mark the claim approved but leave it pending (never expired,
         // pending_count never released, so the peer hit the
         // per-peer limit) and never broadcast or applied the approval.
@@ -342,7 +342,7 @@ void ClaimBook::addLease(const std::string& key, const std::string& chunk_id, co
     leases[key] = Lease{chunk_id, start_key, end_key, holder, Clock::now()};
 }
 
-// PR 66: the expiry, lease and peer-loss parts, moved from NetworkManager
+// The expiry, lease and peer-loss parts, moved from NetworkManager
 // unchanged (same log lines). The caller holds the claim mutex.
 
 bool ClaimBook::hasLiveOwnProposal(const std::string& local_alias) const {
@@ -375,7 +375,7 @@ void ClaimBook::forgetPeer(const std::string& alias) {
     }
     claimed_count.erase(alias);
     pending_count.erase(alias);
-    for (auto it = leases.begin(); it != leases.end();) {  // PR 42
+    for (auto it = leases.begin(); it != leases.end();) {
         it = it->second.holder == alias ? leases.erase(it) : std::next(it);
     }
 }
@@ -484,7 +484,7 @@ std::vector<ClaimBook::ExpiredProposal> ClaimBook::takeExpiredProposals(uint32_t
     return expired;
 }
 
-// PR 67: moved from NetworkManager::tryClaimNextChunk,
+// Moved from NetworkManager::tryClaimNextChunk,
 // claimThrottleRemaining and isChunkClaimedBy unchanged.
 
 bool ClaimBook::startAttempt(Clock::time_point now, std::chrono::milliseconds min_interval) {

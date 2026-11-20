@@ -1,4 +1,4 @@
-// PR 29: raw JSON-RPC access to a BitcoinWallet for tests (the regtest
+// Raw JSON-RPC access to a BitcoinWallet for tests (the regtest
 // suite drives the node through the wallet's own transport).
 #pragma once
 

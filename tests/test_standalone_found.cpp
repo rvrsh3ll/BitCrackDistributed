@@ -1,5 +1,5 @@
 // Standalone (non-P2P) found-key flow, end to end through the real
-// executable (WP3):
+// executable:
 //   - a planted key in a tiny --target/--range window is found by the CPU
 //     workers and journaled owner-only (puzzle00FoundKey.log, status
 //     found_payout_pending) before any payout is attempted,

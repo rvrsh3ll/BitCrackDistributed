@@ -88,7 +88,7 @@ static void attachParentConsoleIfNeeded(int argc, char* argv[]) {
 }
 #endif  // _WIN32
 
-// PR 36: a command-line mistake. Its message has already been printed once
+// A command-line mistake. Its message has already been printed once
 // to stderr ("Error: ..."); callers exit with status 1 without logging it
 // again (it used to appear three times).
 struct UsageError : std::runtime_error {
@@ -591,7 +591,7 @@ public:
             }
             
             auto config = config_manager_->getConfig();
-            // PR 36: --network overrides config.json's bitcoin_network for
+            // --network overrides config.json's bitcoin_network for
             // this run (it is not written back to the config file).
             config_network_from_file_ = config.bitcoin_network;
             if (!network_override_.empty()) {
@@ -611,7 +611,7 @@ public:
                 if (reward.source == RewardAddress::Source::None) {
                     Logger::info("No reward address in config or on the command line");
                 } else if (!reward.error.empty()) {
-                    // PR 31: an explicit --reward must be right; a bad
+                    // An explicit --reward must be right; a bad
                     // config value is dropped (the console prompts for one).
                     const std::string msg = std::string("Invalid reward address from ") +
                                             RewardAddress::sourceName(reward.source) + " '" + reward.address +
@@ -829,7 +829,7 @@ public:
         Logger::info("GUI event loop starting");
         int rc = app.exec();
         shutdown_poll.stop();
-        // PR 56: a close-time shutdown may still be stopping the components
+        // A close-time shutdown may still be stopping the components
         // on the window's thread; it must finish before they are stopped
         // again or destroyed (engine stop() returns at once while another
         // stop() is joining).
@@ -868,7 +868,7 @@ public:
                     return 1;
                 }
 
-                // PR 31: strict validation with the reason.
+                // Strict validation with the reason.
                 {
                     const std::string err = RewardAddress::validate(address, prompt_net);
                     if (!err.empty()) {
@@ -981,7 +981,7 @@ public:
             auto_start_thread_.join();
         }
         // Persist any runtime config changes (e.g., setreward, CLI overrides)
-        // PR 36: but not a --network override; the file keeps its network.
+        // But not a --network override; the file keeps its network.
         try {
             if (config_manager_) {
                 if (!network_override_.empty()) {
@@ -992,7 +992,7 @@ public:
                 (void)config_manager_->save();
             }
         } catch (...) {}
-        // PR 83: the API/stats only read; stop them before anything they read goes away.
+        // The API/stats only read; stop them before anything they read goes away.
         stopStatsAndApi();
         // From here on nothing may (re)start the engine: a late chunk
         // approval (e.g. arriving on the peer's second loopback connection)
@@ -1269,7 +1269,7 @@ private:
                 }
                 reward_address_override_ = argv[++i];
             } else if (arg == "--network") {
-                // PR 36: mainnet | testnet | signet | regtest (overrides config).
+                // Mainnet | testnet | signet | regtest (overrides config).
                 BitcoinNetwork net = BitcoinNetwork::Mainnet;
                 if (i + 1 >= argc || !parseBitcoinNetwork(argv[i + 1], net)) {
                     std::cerr << "Error: --network: " << (i + 1 < argc ? "unknown network '" + std::string(argv[i + 1]) + "'" : std::string("missing value"))
@@ -1375,7 +1375,7 @@ private:
     int cpu_power_override_ = 0;
     std::string config_file_;
     std::string reward_address_override_;
-    std::string network_override_;          // PR 36: --network
+    std::string network_override_;          // --network
     std::string config_network_from_file_;  // restored before saving the config
     bool autostart_override_set_ = false;
     bool autostart_override_ = false;
@@ -1390,11 +1390,11 @@ private:
     std::unique_ptr<BitCrackEngine> engine_;
     std::unique_ptr<NetworkManager> network_manager_;
     std::unique_ptr<StandaloneFoundFlow> standalone_found_;
-    // PR 83: declared after engine_/network_manager_ so they are destroyed first.
+    // Declared after engine_/network_manager_ so they are destroyed first.
     std::unique_ptr<NodeStats> node_stats_;
     std::unique_ptr<NodeApi> node_api_;
 
-    // PR 83: stats sampler (60 s log line) and, when api_enabled, the read-only
+    // Stats sampler (60 s log line) and, when api_enabled, the read-only
     // HTTP API. A failed API bind is logged and the node keeps running.
     void startStatsAndApi() {
         if (node_stats_) return;
@@ -1516,7 +1516,7 @@ int main(int argc, char* argv[]) {
         }
         return app.run();
     } catch (const UsageError&) {
-        return 1;  // PR 36: printed once already
+        return 1;  // Printed once already
     } catch (const std::exception& e) {
         Logger::error(std::string("Fatal error: ") + e.what());
         return 1;
