@@ -25,6 +25,9 @@
 #endif
 
 #include "config.h"
+#ifndef BCD_PROJECT_VERSION
+#define BCD_PROJECT_VERSION "unknown"
+#endif
 #include "BitCrackEngine.h"
 #include "GPUManager.h"
 #include "NetworkManager.h"
@@ -541,12 +544,12 @@ public:
     }
 
     int run() {
-        Logger::info(std::string("BitCrack Distributed v") + PROJECT_VERSION + " starting...");
+        Logger::info(std::string("BitCrack Distributed v") + BCD_PROJECT_VERSION + " starting...");
         return runConsole();
         }
 
     void printVersion() {
-        Logger::info(std::string("BitCrack Distributed ") + PROJECT_VERSION);
+        Logger::info(std::string("BitCrack Distributed ") + BCD_PROJECT_VERSION);
         Logger::info(std::string("Build: ") + __DATE__ + " " + __TIME__);
         
         std::string platform;
@@ -1344,7 +1347,7 @@ private:
     }
     
     void printHelp() {
-        std::cout << "BitCrack Distributed v" << PROJECT_VERSION << "\n\n";
+        std::cout << "BitCrack Distributed v" << BCD_PROJECT_VERSION << "\n\n";
         std::cout << "Usage: bitcrack-distributed [options]\n\n";
         std::cout << "Options:\n";
         std::cout << "  --config <file>   Load configuration from file (default: config.json)\n";

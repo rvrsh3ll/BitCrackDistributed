@@ -223,9 +223,5 @@ else()
 endif()
 string(REGEX REPLACE "[^0-9A-Za-z._-]" "" BCD_BUILD_COMMIT "${BCD_BUILD_COMMIT}")
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/NodeStats.cpp)
-    # PROJECT_VERSION is passed as a compile definition rather than via
-    # config.h: that filename is generic, and on MSVC + vcpkg another
-    # config.h can win the include path so PROJECT_VERSION is undeclared.
-    set_source_files_properties(NodeStats.cpp PROPERTIES COMPILE_DEFINITIONS
-        "BCD_BUILD_COMMIT=\"${BCD_BUILD_COMMIT}\";PROJECT_VERSION=\"${PROJECT_VERSION}\"")
+    set_source_files_properties(NodeStats.cpp PROPERTIES COMPILE_DEFINITIONS "BCD_BUILD_COMMIT=\"${BCD_BUILD_COMMIT}\"")
 endif()

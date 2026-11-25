@@ -219,6 +219,12 @@ include_directories(include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
+# Unique name: #include "config.h" can resolve to a different header on
+# MSVC + vcpkg, so PROJECT_VERSION from our generated config.h is not
+# visible there. Must be set before add_subdirectory so every target
+# created below inherits it.
+add_compile_definitions("BCD_PROJECT_VERSION=\"${PROJECT_VERSION}\"")
+
 # Add subdirectories
 add_subdirectory(src)
 
@@ -324,7 +330,6 @@ configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/config.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/config.h"
 )
-
 ## (Move PDB property auto-apply block to end of file so it runs after all targets are defined)
 # On MSVC, ensure compile PDB names/locations are explicit for all local targets
 # so the generated MSBuild projects don't accidentally set a directory as the

@@ -25,8 +25,8 @@
 #ifndef BCD_BUILD_COMMIT
 #define BCD_BUILD_COMMIT "unknown"
 #endif
-#ifndef PROJECT_VERSION
-#define PROJECT_VERSION "unknown"
+#ifndef BCD_PROJECT_VERSION
+#define BCD_PROJECT_VERSION "unknown"
 #endif
 
 namespace {
@@ -125,7 +125,7 @@ NodeStats::NodeStats(const Config& config, BitCrackEngine* engine, NetworkManage
 NodeStats::~NodeStats() { stop(); }
 
 std::string NodeStats::buildCommit() { return BCD_BUILD_COMMIT; }
-std::string NodeStats::version() { return PROJECT_VERSION; }
+std::string NodeStats::version() { return BCD_PROJECT_VERSION; }
 
 void NodeStats::start(std::chrono::milliseconds sample_interval, std::chrono::seconds log_interval) {
     {
