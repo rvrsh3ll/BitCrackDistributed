@@ -1,0 +1,275 @@
+name: Windows CUDA build
+
+# Manual-only (Actions tab > "Windows CUDA build" > Run workflow, or
+#   gh workflow run windows-cuda.yml -f ref=v1.0.0 -f release_tag=v1.0.0).
+# Builds the Windows x64 console exe with MSVC + CUDA 12.8 (kernels for
+# sm_61/70/75/80/86/89/120 plus PTX, same as the Linux CUDA package), smoke-tests
+# it on the runner (which has no GPU), and uploads a ready-to-run zip as a
+# workflow artifact. If release_tag is set, the zip is also attached to that
+# existing release (replacing an asset of the same name) and SHA256SUMS is
+# regenerated over all of the release's assets.
+#
+# nvcuda.dll (the NVIDIA driver) is delay-loaded, so the exe still starts on a
+# machine without the driver; the CUDA probes run inside SEH guards and simply
+# report no CUDA devices. cudart64_12.dll is bundled next to the exe.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (tag, branch or SHA). Empty = the commit this run was started on.'
+        required: false
+        default: ''
+      release_tag:
+        description: 'Existing release tag to attach the zip to (e.g. v1.0.0). Empty = artifact only.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_COMMIT: 22375ff854079e54bef8a72c25382c18ca126e36   # keep equal to vcpkg.json builtin-baseline
+  VCPKG_DEFAULT_TRIPLET: x64-windows
+  CUDA_VERSION: 12.8.1        # driver R570+; CUDA 13 drops sm_61/sm_70
+  CUDA_ARCHS: 61;70;75;80;86;89;120
+
+jobs:
+  build:
+    name: Windows x64 CUDA
+    runs-on: windows-2022
+    timeout-minutes: 150
+    outputs:
+      pkgname: ${{ steps.pkg.outputs.pkgname }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Install CUDA ${{ env.CUDA_VERSION }}
+        id: cuda
+        uses: Jimver/cuda-toolkit@b8bf9c6c28f8a92fbb04dcfcaee872e60c57462d   # v0.2.36
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: network
+          sub-packages: '["nvcc", "cudart"]'   # names per the CUDA 12.8 Windows install guide
+          use-github-cache: false
+          use-local-cache: false
+
+      - name: Set up MSVC (vcvars64) and check nvcc
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "Visual Studio with VC tools not found" }
+          $lines = cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul 2>&1 && set"
+          foreach ($l in $lines) { if ($l -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV } }
+          Write-Host "CUDA_PATH=$env:CUDA_PATH"
+          & "$env:CUDA_PATH\bin\nvcc.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "nvcc not usable" }
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-x64-windows-ninja
+
+      - name: Set up pinned vcpkg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'vcpkg'
+          git clone --quiet https://github.com/microsoft/vcpkg $root
+          git -C $root checkout --quiet $env:VCPKG_COMMIT
+          & "$root/bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed" }
+          $cache = Join-Path $env:RUNNER_TEMP 'vcpkg-cache'
+          New-Item -ItemType Directory -Force -Path $cache | Out-Null
+          "VCPKG_ROOT=$root" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cudaRoot = $env:CUDA_PATH -replace '\\','/'
+          cmake -S . -B build_cuda -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DDISABLE_CUDA=OFF `
+            "-DCMAKE_CUDA_COMPILER=$cudaRoot/bin/nvcc.exe" "-DCUDAToolkit_ROOT=$cudaRoot" `
+            "-DBITCRACK_CUDA_ARCH=$env:CUDA_ARCHS" `
+            -DBITCRACK_COPY_BUILD_TO_DIST=OFF -DBITCRACK_BUILD_TESTS=OFF `
+            "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /DNOMINMAX" `
+            "-DCMAKE_EXE_LINKER_FLAGS=/DELAYLOAD:nvcuda.dll delayimp.lib" 2>&1 | Tee-Object -FilePath configure.log
+          if ($LASTEXITCODE -ne 0) { throw "configure failed" }
+          $ver = Select-String -Path configure.log -Pattern 'Found OpenSSL:.*found version "([^"]+)"' | Select-Object -First 1
+          Write-Host "OpenSSL: $($ver.Line)"
+          if (-not $ver -or -not $ver.Matches[0].Groups[1].Value.StartsWith('3.')) { throw "expected OpenSSL 3.x" }
+          if (-not (Select-String -Path configure.log -Pattern 'GPU acceleration enabled' -Quiet)) { throw "CUDA was not enabled" }
+
+      - name: Save vcpkg binary cache
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-x64-windows-ninja
+
+      - name: Build
+        # bitcrack-cuda-probe.exe must sit next to the main exe: on Windows the
+        # CUDA device count comes from that helper process (gpu/GPUProbe.c).
+        run: cmake --build build_cuda --target bitcrack-distributed bitcrack-cuda-probe -j 4
+
+      - name: Package
+        id: pkg
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $src = (git rev-parse HEAD).Trim()
+          if ($env:RELEASE_TAG) { $ver = $env:RELEASE_TAG } else {
+            $m = Select-String -Path CMakeLists.txt -Pattern 'project\(BitCrackDistributed VERSION ([0-9.]+)' | Select-Object -First 1
+            $ver = "v$($m.Matches[0].Groups[1].Value)-$($src.Substring(0,7))"
+          }
+          $name = "bitcrack-distributed-$ver-windows-x86_64-cuda"
+          $pkg = Join-Path $env:GITHUB_WORKSPACE "pkg/$name"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item build_cuda/Release/bitcrack-distributed.exe "$pkg/bitcrack-distributed.exe"
+          Copy-Item build_cuda/Release/bitcrack-cuda-probe.exe "$pkg/bitcrack-cuda-probe.exe"
+          Copy-Item "$env:CUDA_PATH/bin/cudart64_12.dll" $pkg
+          $sslBin = Get-ChildItem -Recurse -Path build_cuda/vcpkg_installed/x64-windows/bin -Include 'libcrypto-3*.dll','libssl-3*.dll'
+          if ($sslBin.Count -lt 2) { throw "OpenSSL 3 DLLs not found in vcpkg_installed" }
+          $sslBin | ForEach-Object { Copy-Item $_.FullName $pkg }
+          $crt = 'msvcp140.dll','msvcp140_1.dll','msvcp140_2.dll','vcruntime140.dll','vcruntime140_1.dll','concrt140.dll'
+          foreach ($d in $crt) { $s = Join-Path $env:WINDIR "System32/$d"; if (Test-Path $s) { Copy-Item $s $pkg } }
+          Copy-Item README.md, LICENSE, docs/INSTALL_WINDOWS.md $pkg
+          Invoke-WebRequest -UseBasicParsing -Uri https://curl.se/ca/cacert.pem -OutFile "$pkg/cacert.pem"
+          if ((Get-Item "$pkg/cacert.pem").Length -lt 100000) { throw "cacert.pem download looks wrong" }
+          $bat = @(
+            '@echo off',
+            'rem Starts bitcrack-distributed.exe from this folder with the bundled CA list',
+            'rem (cacert.pem, Mozilla roots via curl.se) so the Electrum TLS check can verify servers.',
+            'if not defined SSL_CERT_FILE set "SSL_CERT_FILE=%~dp0cacert.pem"',
+            '"%~dp0bitcrack-distributed.exe" %*')
+          ($bat -join "`r`n") + "`r`n" | Out-File -Encoding ascii -NoNewline "$pkg/run.bat"
+          $run = @"
+          BitCrack Distributed $ver (Windows x64, NVIDIA CUDA)
+          Built from $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY commit $src
+          by GitHub Actions run $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
+          (MSVC + CUDA $env:CUDA_VERSION; kernels for sm_61/70/75/80/86/89/120 plus PTX).
+
+          Needs an NVIDIA GPU (GTX 10-series or newer) and NVIDIA driver 570 or newer.
+          The CUDA runtime (cudart64_12.dll), OpenSSL 3 and the MSVC runtime DLLs are
+          bundled; nothing else to install. Without an NVIDIA driver it runs CPU-only.
+
+          Run from a Command Prompt or PowerShell in this folder:
+            run.bat --gpu-only --dashboard --reward <your_bitcoin_address>
+
+          Then open http://127.0.0.1:3339/ for the live dashboard (local machine only).
+          run.bat sets SSL_CERT_FILE to the bundled cacert.pem (used to verify the
+          Electrum servers over TLS) and starts bitcrack-distributed.exe with your
+          arguments. You can also run bitcrack-distributed.exe directly.
+
+          Allow bitcrack-distributed.exe through Windows Firewall when asked (P2P port 3338).
+          The node writes config.json and node_id.json in the folder you start it from.
+          Keep node_id.json: it is your node's identity on the network.
+
+          bitcrack-distributed.exe --help lists all options.
+          "@
+          $run -replace "`r?`n", "`r`n" | Out-File -Encoding ascii "$pkg/RUN.txt"
+          Get-ChildItem $pkg | Format-Table Name, Length
+          Compress-Archive -Path $pkg -DestinationPath "$env:GITHUB_WORKSPACE/pkg/$name.zip" -CompressionLevel Optimal
+          "pkgname=$name" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+      - name: Smoke-test the packaged exe (clean PATH, no GPU, no network)
+        shell: pwsh
+        env:
+          PKGNAME: ${{ steps.pkg.outputs.pkgname }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = Join-Path $env:GITHUB_WORKSPACE "pkg/$env:PKGNAME"
+          # Only Windows itself on PATH, so missing bundled DLLs fail here.
+          $env:PATH = "$env:WINDIR\System32;$env:WINDIR"
+          $cli = "$pkg/bitcrack-distributed.exe"
+          $v = & $cli --version | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "--version exit $LASTEXITCODE" }
+          Write-Host $v
+          $h = & $cli --help | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "--help exit $LASTEXITCODE" }
+          if (-not ($h -match '--gpu-only')) { throw "--help output missing --gpu-only" }
+          $derive = & $cli --derive-address 1 | Out-String
+          if (-not ($derive -match "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH")) { throw "derive-address known vector failed: $derive" }
+          # Standalone node (P2P off, empty bootstrap list): exercises the CUDA
+          # probe without a driver (delay-loaded nvcuda.dll) and the dashboard.
+          $tmp = Join-Path $env:RUNNER_TEMP 'dash-smoke'
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          $cfg = Join-Path $tmp 'config.json'
+          @{ data_directory = ($tmp -replace '\\','/'); reward_address = 'bc1qzarehesk3gnh9emgd4t7sjgsu7dwp79545c2nh'; gpu = @{ enable_cuda = $true }; network = @{ enable_p2p = $false; bootstrap_nodes = @(); enable_upnp = $false; bind_address = '127.0.0.1' } } |
+            ConvertTo-Json -Depth 5 | Out-File -Encoding ascii $cfg
+          $n = Start-Process -FilePath $cli -WorkingDirectory $tmp -ArgumentList '--daemon','--dashboard','--config',$cfg -PassThru -RedirectStandardOutput (Join-Path $tmp 'out.log') -RedirectStandardError (Join-Path $tmp 'err.log')
+          $ok = $false
+          for ($i = 0; $i -lt 90 -and -not $ok; $i++) {
+            Start-Sleep -Seconds 1
+            if ($n.HasExited) { break }
+            try { $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 http://127.0.0.1:3339/; $ok = $r.Content -match '<title>BitCrack Distributed dashboard</title>' } catch {}
+          }
+          if (-not $ok) { Get-Content (Join-Path $tmp 'out.log') -Tail 60; Get-Content (Join-Path $tmp 'err.log') -Tail 20; if (-not $n.HasExited) { Stop-Process -Id $n.Id -Force }; throw "dashboard not served (exited=$($n.HasExited))" }
+          $st = Invoke-RestMethod -TimeoutSec 5 http://127.0.0.1:3339/status
+          Write-Host "dashboard ok; status version $($st.version)"
+          Stop-Process -Id $n.Id -Force
+          Select-String -Path (Join-Path $tmp 'out.log') -Pattern 'CUDA|GPU' | Select-Object -First 15 | ForEach-Object { $_.Line }
+          # -7777 means the probe helper was missing or could not start; on a
+          # driverless runner the helper itself should run and report an error.
+          $probe = Select-String -Path (Join-Path $tmp 'out.log') -Pattern 'safe_cuda_get_device_count_oop returned rc=(-?[0-9]+)' | Select-Object -First 1
+          if (-not $probe) { throw "CUDA probe did not run" }
+          if ($probe.Matches[0].Groups[1].Value -eq '-7777') { throw "bitcrack-cuda-probe.exe missing or failed to start" }
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.pkgname }}
+          path: pkg/${{ steps.pkg.outputs.pkgname }}.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-cuda-diagnostics
+          path: |
+            configure.log
+            build_cuda/CMakeCache.txt
+          retention-days: 14
+
+  attach:
+    name: Attach to release ${{ inputs.release_tag }}
+    needs: build
+    if: inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ inputs.release_tag }}
+      PKGNAME: ${{ needs.build.outputs.pkgname }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.pkgname }}
+          path: upload
+
+      - name: Upload zip and regenerate SHA256SUMS
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --json tagName >/dev/null   # must already exist; never creates one
+          gh release upload "$TAG" "upload/$PKGNAME.zip" --clobber
+          mkdir assets && cd assets
+          gh release download "$TAG" --pattern '*' --skip-existing
+          rm -f SHA256SUMS
+          find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
+          cat SHA256SUMS
+          sha256sum -c SHA256SUMS
+          gh release upload "$TAG" SHA256SUMS --clobber
