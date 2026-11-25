@@ -1,7 +1,5 @@
 #include "NodeStats.h"
 
-#include "config.h"
-
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -26,6 +24,9 @@
 
 #ifndef BCD_BUILD_COMMIT
 #define BCD_BUILD_COMMIT "unknown"
+#endif
+#ifndef PROJECT_VERSION
+#define PROJECT_VERSION "unknown"
 #endif
 
 namespace {
