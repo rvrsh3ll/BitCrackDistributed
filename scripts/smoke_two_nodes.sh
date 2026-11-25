@@ -206,7 +206,7 @@ fail() {
 # Start B only once A is listening, so B's first bootstrap connect succeeds
 # (the client loop's retry interval is long).
 deadline_start "$CONNECT_TIMEOUT"
-until grep -q "Server listening on port $PORT_A" "$WORK/a/out.log" 2>/dev/null; do
+until grep -qE "Server listening on (port $PORT_A|[0-9.]+:$PORT_A)\b" "$WORK/a/out.log" 2>/dev/null; do
     kill -0 "$PID_A" 2>/dev/null || fail "node A exited early"
     deadline_left || fail "node A did not listen within ${CONNECT_TIMEOUT}s"
     sleep 0.2

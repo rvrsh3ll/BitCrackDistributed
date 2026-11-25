@@ -267,9 +267,18 @@ bool NetworkManager::waitForShutdown(std::chrono::milliseconds timeout) {
     return shutdown_cv_.wait_for(lk, timeout, [this]() { return !running_.load(); });
 }
 
-void NetworkManager::start() {
+bool NetworkManager::start() {
     std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
-    if (running_) return;
+    if (running_) return true;
+
+    listen_error_.clear();
+    listen_endpoint_.clear();
+    std::string bind_err;
+    if (!openListenSocket(bind_err)) {
+        listen_error_ = bind_err;
+        Logger::error(bind_err);
+        return false;
+    }
 
     {
         std::lock_guard<std::mutex> lk(shutdown_mutex_);
@@ -347,6 +356,7 @@ void NetworkManager::start() {
     Logger::info("Network manager started");
 
     // P2P mode: no coordinator auto-init, work autonomously
+    return true;
 }
 
 void NetworkManager::stop() {
@@ -709,41 +719,79 @@ std::vector<PeerInfo> NetworkManager::getConnectedPeers() const {
     return peers;
 }
 
-void NetworkManager::serverLoop() {
-    try {
-    // Create server socket
+bool NetworkManager::openListenSocket(std::string& error) {
+    if (server_socket_ != INVALID_SOCKET) {
+        closesocket(server_socket_);
+        server_socket_ = INVALID_SOCKET;
+    }
+    listen_endpoint_.clear();
+
+    in_addr addr{};
+    if (!socket_util::parseListenIPv4(config_.network.bind_address, addr, &error)) {
+        return false;
+    }
+    const std::string bind_ip = socket_util::ipv4ToString(addr);
+    const uint16_t port = config_.network.port;
+
     server_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (server_socket_ == INVALID_SOCKET) {
-        Logger::error("Failed to create server socket");
-        return;
+        error = "Failed to create P2P server socket: " + socket_util::lastSocketError();
+        return false;
     }
 
-    // Set socket options
     int reuse = 1;
     setsockopt(server_socket_, SOL_SOCKET, SO_REUSEADDR, (char*)&reuse, sizeof(reuse));
 
-    // Bind to port
     sockaddr_in server_addr = {};
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(config_.network.port);
-    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(port);
+    server_addr.sin_addr = addr;
 
     if (bind(server_socket_, (sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
-        Logger::error("Failed to bind server socket");
+        error = "Failed to bind P2P listen socket to " + bind_ip + ":" + std::to_string(port) +
+                ": " + socket_util::lastSocketError();
         closesocket(server_socket_);
         server_socket_ = INVALID_SOCKET;
-        return;
+        return false;
     }
 
-    // Listen for connections
     if (listen(server_socket_, SOMAXCONN) == SOCKET_ERROR) {
-        Logger::error("Failed to listen on server socket");
+        error = "Failed to listen on " + bind_ip + ":" + std::to_string(port) +
+                ": " + socket_util::lastSocketError();
         closesocket(server_socket_);
         server_socket_ = INVALID_SOCKET;
-        return;
+        return false;
     }
 
-    Logger::info("Server listening on port " + std::to_string(config_.network.port));
+    sockaddr_in bound = {};
+#ifdef WINDOWS
+    int bound_len = sizeof(bound);
+#else
+    socklen_t bound_len = sizeof(bound);
+#endif
+    if (getsockname(server_socket_, (sockaddr*)&bound, &bound_len) == 0) {
+        const std::string actual_ip = socket_util::ipv4ToString(bound.sin_addr);
+        listen_endpoint_ = (actual_ip.empty() ? bind_ip : actual_ip) + ":" +
+                           std::to_string(ntohs(bound.sin_port));
+    } else {
+        listen_endpoint_ = bind_ip + ":" + std::to_string(port);
+    }
+
+    Logger::info("Server listening on " + listen_endpoint_);
+    if (config_.network.enable_upnp && socket_util::isLoopbackIPv4(addr)) {
+        // UPnP is not implemented on this listener, but if it is added it
+        // must not map a public port for a loopback-only bind.
+        Logger::info("UPnP skipped: P2P listener is bound to loopback");
+    }
+    return true;
+}
+
+void NetworkManager::serverLoop() {
+    try {
+    if (server_socket_ == INVALID_SOCKET) {
+        Logger::error("P2P server loop started without a listen socket");
+        return;
+    }
 
     while (running_) {
         // 1 second timeout; nfds is computed portably (fd+1 on POSIX)
@@ -2301,8 +2349,17 @@ std::vector<std::string> NetworkManager::collectPeerAddrPayloads() const {
             }
         }
     }
-    std::string self_endpoint = config_.network.bind_address + ":" + std::to_string(config_.network.port);
-    if (seen.insert(self_endpoint).second && !config_.reward_address.empty()) {
+    // Advertise the bound endpoint. A loopback bind stays loopback (never
+    // replaced with a public or other interface address). An all-interfaces
+    // bind still advertises 0.0.0.0:port, as before this fix.
+    std::string self_endpoint = listen_endpoint_;
+    if (self_endpoint.empty()) {
+        in_addr addr{};
+        if (socket_util::parseListenIPv4(config_.network.bind_address, addr, nullptr)) {
+            self_endpoint = socket_util::ipv4ToString(addr) + ":" + std::to_string(config_.network.port);
+        }
+    }
+    if (!self_endpoint.empty() && seen.insert(self_endpoint).second && !config_.reward_address.empty()) {
         payloads.push_back(self_endpoint + "|" + config_.reward_address + "|" + getLocalAlias());
     }
     return payloads;

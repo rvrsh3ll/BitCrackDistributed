@@ -153,9 +153,18 @@ public:
     NetworkManager(const Config& config, BitCrackEngine* engine);
     ~NetworkManager();
 
-    void start();
+    // Binds the P2P listen socket to network.bind_address (empty / 0.0.0.0 =
+    // all interfaces) then starts the I/O threads. Returns false and leaves
+    // the manager stopped if the address is invalid or bind/listen fails;
+    // listenError() has the reason. Does not fall back to 0.0.0.0.
+    bool start();
     void stop();
     bool isConnected() const;
+    // Actual bound endpoint after a successful start(), e.g. "127.0.0.1:3338".
+    // Empty if start() has not bound a socket.
+    std::string listenEndpoint() const { return listen_endpoint_; }
+    // Why the last start() failed to bind, or empty.
+    std::string listenError() const { return listen_error_; }
     std::vector<PeerInfo> getConnectedPeers() const;
     std::vector<PeerDetail> getPeerDetails() const;
     // tests only: every outbound P2P connect asks this first (ip, port);
@@ -287,6 +296,7 @@ public:
 private:
         // Request a state sync from a peer (stub: implement actual sync logic as needed)
         void requestStateSync(const std::string& peer_alias);
+    bool openListenSocket(std::string& error);
     void serverLoop();
     void clientLoop();
     // Outbound dialing (clientLoop): resolve host to IPv4 addresses off-thread
@@ -479,6 +489,8 @@ private:
     // tryClaimNextChunk is single-flight (two triggers proposed two chunks).
     std::atomic<bool> claim_attempt_in_flight_{false};
     SOCKET server_socket_;
+    std::string listen_endpoint_;
+    std::string listen_error_;
 
     std::thread server_thread_;
     std::thread client_thread_;

@@ -15,7 +15,11 @@ The local quick start below sets `bootstrap_nodes` explicitly in every config
 (`[]` for the first node, loopback addresses for the others), so those nodes
 never contact the public seeds. An explicit list, including `[]`, is always kept
 as written. To keep a node off the public network, set `"bootstrap_nodes": []`
-(or only your own nodes) and `"bind_address": "127.0.0.1"`.
+(or only your own nodes) and `"bind_address": "127.0.0.1"`. The P2P
+listener honors `bind_address`: `"127.0.0.1"` accepts only local
+connections, and the default `"0.0.0.0"` (or an empty value) listens on
+all interfaces. An invalid address is an error and the node will not
+start. The P2P stack is IPv4-only.
 
 ## Quick Start - Local Testing
 
@@ -31,6 +35,7 @@ Create a per-node `config.json` for Node 1 by copying `config.json` and adjustin
   "network": {
     "enable_p2p": true,
     "port": 3338,
+    "bind_address": "127.0.0.1",
     "max_peers": 8,
     "bootstrap_nodes": [],
     "connection_timeout_ms": 5000,
@@ -54,6 +59,7 @@ Create a per-node `config.json` for Node 2 by copying `config.json` and adjustin
   "network": {
     "enable_p2p": true,
     "port": 8335,
+    "bind_address": "127.0.0.1",
     "max_peers": 8,
     "bootstrap_nodes": ["127.0.0.1:3338"],
     "connection_timeout_ms": 5000,
@@ -77,6 +83,7 @@ Create a per-node `config.json` for Node 3 by copying `config.json` and adjustin
   "network": {
     "enable_p2p": true,
     "port": 8336,
+    "bind_address": "127.0.0.1",
     "max_peers": 8,
     "bootstrap_nodes": ["127.0.0.1:3338", "127.0.0.1:8335"],
     "connection_timeout_ms": 5000,
@@ -102,7 +109,7 @@ cd build_vs2022\Release
 .\bitcrack-distributed.exe --config ..\..\config.json --console
 ```
 
-Wait for "Server listening on port 3338" message, then:
+Wait for "Server listening on 127.0.0.1:3338" (or `0.0.0.0:3338` if `bind_address` is left at the default), then:
 
 **Terminal 2 (Node 2):**
 ```powershell

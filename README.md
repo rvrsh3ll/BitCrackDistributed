@@ -509,6 +509,7 @@ script fails if a node connects to a non-loopback peer.
   "network": {
     "enable_p2p": true,
     "port": 3338,
+    "bind_address": "0.0.0.0",
     "max_peers": 8
   },
   "puzzle": {
@@ -517,6 +518,15 @@ script fails if a node connects to a non-loopback peer.
   }
 }
 ```
+
+`network.bind_address` (default `"0.0.0.0"`) is the IPv4 address the P2P port
+listens on. Leave it empty or set `"0.0.0.0"` to accept peers on every
+interface (the default, unchanged). Set `"127.0.0.1"` for a local-only test
+network. There is no command-line flag for this (unlike `--api-bind`, which
+only affects the HTTP dashboard). The P2P stack is IPv4-only: an IPv6
+literal or any other value that is not an IPv4 address is an error and the
+node will not start, rather than silently listening on all interfaces. A
+loopback bind is advertised as loopback and does not attempt UPnP.
 
 #### Payouts (`enable_mpc`, default `false`)
 

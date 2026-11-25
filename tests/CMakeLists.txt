@@ -87,6 +87,7 @@ set(TEST_SOURCES
     test_independent_hydration.cpp
     # select() nfds + owned background thread
     test_network_loopback.cpp
+    test_bind_address.cpp
     test_bootstrap_resolve.cpp
     test_data_dir_default.cpp
     test_claim_expiry_no_loop.cpp

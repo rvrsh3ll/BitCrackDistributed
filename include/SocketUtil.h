@@ -22,6 +22,8 @@
 #include <ifaddrs.h>
 #endif
 #include <algorithm>
+#include <cctype>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -178,6 +180,65 @@ inline std::vector<std::string> localIPv4Addresses() {
     ::freeifaddrs(ifs);
 #endif
     return out;
+}
+
+// Trim ASCII whitespace. Used when parsing bind_address from config.
+inline std::string trimCopy(const std::string& s) {
+    size_t b = 0, e = s.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+    return s.substr(b, e - b);
+}
+
+inline std::string lastSocketError() {
+#if defined(_WIN32) || defined(WINDOWS)
+    return "WSA error " + std::to_string(WSAGetLastError());
+#else
+    return std::strerror(errno);
+#endif
+}
+
+inline std::string ipv4ToString(const in_addr& a) {
+    char buf[INET_ADDRSTRLEN] = {0};
+    if (!::inet_ntop(AF_INET, &a, buf, sizeof(buf))) return {};
+    return buf;
+}
+
+inline bool isUnspecifiedIPv4(const in_addr& a) {
+    return a.s_addr == htonl(INADDR_ANY);
+}
+
+inline bool isLoopbackIPv4(const in_addr& a) {
+    return (ntohl(a.s_addr) >> 24) == 127;
+}
+
+// Parse network.bind_address for the P2P IPv4 listener.
+// Empty or "0.0.0.0" (the default) means all interfaces (INADDR_ANY).
+// An IPv4 literal is used as-is. Hostnames and IPv6 addresses are
+// rejected: the P2P stack is IPv4-only, and an invalid value must not
+// silently fall back to all interfaces.
+inline bool parseListenIPv4(const std::string& bind_address, in_addr& out, std::string* error = nullptr) {
+    const std::string s = trimCopy(bind_address);
+    out = {};
+    if (s.empty() || s == "0.0.0.0") {
+        out.s_addr = htonl(INADDR_ANY);
+        return true;
+    }
+    if (s.find(':') != std::string::npos) {
+        if (error) {
+            *error = "bind_address '" + s +
+                     "' is not a valid IPv4 address (the P2P listener is IPv4-only)";
+        }
+        return false;
+    }
+    if (::inet_pton(AF_INET, s.c_str(), &out) != 1) {
+        if (error) {
+            *error = "invalid bind_address '" + s +
+                     "' (want an IPv4 address, or empty / 0.0.0.0 for all interfaces)";
+        }
+        return false;
+    }
+    return true;
 }
 
 } // namespace socket_util

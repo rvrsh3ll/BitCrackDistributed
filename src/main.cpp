@@ -40,6 +40,7 @@
 #include "SecretFile.h"
 #include "Secp256k1Scan.h"
 #include "AddressGenerator.h"
+#include "SocketUtil.h"
 
 #include <deque>
 #include <random>
@@ -653,6 +654,14 @@ public:
                                  ": " + reward.address);
                 }
             }
+            if (config.network.enable_p2p) {
+                in_addr bind_addr{};
+                std::string bind_err;
+                if (!socket_util::parseListenIPv4(config.network.bind_address, bind_addr, &bind_err)) {
+                    std::cerr << "Error: " << bind_err << "\n";
+                    throw UsageError(bind_err);
+                }
+            }
             if (cpu_only_mode_) {
                 config.gpu.disable_gpu = true;
             }
@@ -877,7 +886,13 @@ public:
         // Start networking if enabled
         if (network_manager_) {
             Logger::info("Starting network manager...");
-            network_manager_->start();
+            if (!network_manager_->start()) {
+                const std::string msg = network_manager_->listenError().empty()
+                                            ? "Failed to bind the P2P listen socket"
+                                            : network_manager_->listenError();
+                std::cerr << "Error: " << msg << "\n";
+                throw UsageError(msg);
+            }
             Logger::info("Network manager started");
             startStatsAndApi();
         } else {
