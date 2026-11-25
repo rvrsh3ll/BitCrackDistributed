@@ -1,5 +1,7 @@
 #include "NodeStats.h"
 
+#include "config.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -122,7 +124,7 @@ NodeStats::NodeStats(const Config& config, BitCrackEngine* engine, NetworkManage
 NodeStats::~NodeStats() { stop(); }
 
 std::string NodeStats::buildCommit() { return BCD_BUILD_COMMIT; }
-std::string NodeStats::version() { return "1.0.0"; }
+std::string NodeStats::version() { return PROJECT_VERSION; }
 
 void NodeStats::start(std::chrono::milliseconds sample_interval, std::chrono::seconds log_interval) {
     {

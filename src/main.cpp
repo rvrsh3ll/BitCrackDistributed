@@ -541,12 +541,12 @@ public:
     }
 
     int run() {
-        Logger::info("BitCrack Distributed v1.0.0 starting...");
+        Logger::info(std::string("BitCrack Distributed v") + PROJECT_VERSION + " starting...");
         return runConsole();
         }
 
     void printVersion() {
-        Logger::info("BitCrack Distributed 1.0.0");
+        Logger::info(std::string("BitCrack Distributed ") + PROJECT_VERSION);
         Logger::info(std::string("Build: ") + __DATE__ + " " + __TIME__);
         
         std::string platform;
@@ -1344,7 +1344,7 @@ private:
     }
     
     void printHelp() {
-        std::cout << "BitCrack Distributed v1.0.0\n\n";
+        std::cout << "BitCrack Distributed v" << PROJECT_VERSION << "\n\n";
         std::cout << "Usage: bitcrack-distributed [options]\n\n";
         std::cout << "Options:\n";
         std::cout << "  --config <file>   Load configuration from file (default: config.json)\n";
