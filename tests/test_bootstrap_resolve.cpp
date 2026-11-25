@@ -296,7 +296,6 @@ TEST_CASE("stop() is prompt while a bootstrap lookup is pending", "[bootstrap_dn
     std::this_thread::sleep_for(std::chrono::seconds(4));  // let the helper finish before the next test
     fs::remove_all(dir);
 }
-#endif
 
 TEST_CASE("One address is dialed once per pass whichever bootstrap entries name it", "[bootstrap_dns][bootstrap_defaults][network]") {
     // Like the default list: two hostnames that resolve to a node plus its
@@ -390,3 +389,5 @@ TEST_CASE("Config files: an explicit bootstrap list (even empty) is kept; defaul
     });
     fs::remove_all(dir);
 }
+// (POSIX-only: the helpers above use BSD sockets.)
+#endif

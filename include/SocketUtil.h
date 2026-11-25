@@ -18,6 +18,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <ifaddrs.h>
 #endif
 #include <algorithm>
@@ -96,6 +97,14 @@ inline void suppressSigpipe(socket_t s) {
 #else
     (void)s;
 #endif
+}
+
+// Peer links carry small request lines (GETDATA then GETBLOCKS back to back
+// during block sync); with Nagle the second waited for the first's delayed
+// ACK, ~40 ms per header page. Returns true when the option was set.
+inline bool setNoDelay(socket_t s) {
+    int one = 1;
+    return setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof(one)) == 0;
 }
 
 // Shut down both directions without releasing the descriptor. Used to wake a

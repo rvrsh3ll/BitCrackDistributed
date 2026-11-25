@@ -247,19 +247,53 @@ void BitCrackEngine::start() {
         gpu_manager_->startKeyGeneration();
     }
     
-    // Start CPU threads
-    int num_threads = config_.cpu_thread_count > 0 ? config_.cpu_thread_count : std::thread::hardware_concurrency();
-    if (num_threads == 0) num_threads = 1;
-    
-    Logger::info(std::string("[ENGINE] Starting ") + std::to_string(num_threads) + " CPU threads");
+    // Start CPU threads (none in GPU-only mode)
+    const uint32_t num_threads = cpuWorkerCount(config_);
+    if (config_.gpu_only) {
+        Logger::info("[ENGINE] GPU-only mode: starting 0 CPU threads");
+    } else {
+        Logger::info(std::string("[ENGINE] Starting ") + std::to_string(num_threads) + " CPU threads");
+    }
     
     cpu_threads_.clear();
-    for (int i = 0; i < num_threads; ++i) {
-        cpu_threads_.emplace_back(&BitCrackEngine::cpuSearchWorker, this, i);
+    for (uint32_t i = 0; i < num_threads; ++i) {
+        cpu_threads_.emplace_back(&BitCrackEngine::cpuSearchWorker, this, static_cast<int>(i));
     }
     
     // Start main thread for coordination
     main_thread_ = std::thread(&BitCrackEngine::searchWorker, this);
+
+    // Start the CUDA search worker when a GPU kernel is ready (it was
+    // initialized by gpu_manager_->startKeyGeneration() just above). The worker
+    // pulls batches from the same shared range as the CPU threads and
+    // host-verifies every candidate the device reports.
+    if (gpu_manager_ && gpu_manager_->cudaReady()) {
+        gpu_thread_ = std::thread(&BitCrackEngine::gpuSearchWorker, this);
+    } else if (num_threads == 0) {
+        Logger::error("[ENGINE] GPU-only mode but no CUDA GPU is ready: this node is not scanning");
+    }
+}
+
+std::vector<GPUDevice> BitCrackEngine::gpuDevices() const {
+    if (!gpu_manager_) return {};
+    return gpu_manager_->getAvailableDevices();
+}
+
+uint32_t BitCrackEngine::cpuWorkerCount(const Config& config) {
+    if (config.gpu_only) return 0;
+    if (config.cpu_thread_count > 0) return config.cpu_thread_count;
+    const unsigned hw = std::thread::hardware_concurrency();
+    return hw > 0 ? hw : 1;
+}
+
+bool BitCrackEngine::gpuSearchAvailable() {
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
+    if (!gpu_manager_) return false;
+    if (running_ || stopping_) return gpu_manager_->cudaReady();
+    gpu_manager_->startKeyGeneration();
+    const bool ready = gpu_manager_->cudaReady();
+    gpu_manager_->stopKeyGeneration();
+    return ready;
 }
 
 void BitCrackEngine::beginShutdown() {
@@ -269,6 +303,7 @@ void BitCrackEngine::beginShutdown() {
 
 void BitCrackEngine::stop() {
     std::thread main_thread;
+    std::thread gpu_thread;
     std::vector<std::thread> cpu_threads;
     {
         std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
@@ -279,6 +314,7 @@ void BitCrackEngine::stop() {
         should_stop_ = true;
         running_ = false;
         main_thread = std::move(main_thread_);
+        gpu_thread = std::move(gpu_thread_);
         batch_cv_.notify_all();  // Wake a puzzle switch waiting on batches
         cpu_threads.swap(cpu_threads_);
     }
@@ -294,6 +330,10 @@ void BitCrackEngine::stop() {
     if (main_thread.joinable()) {
         if (main_thread.get_id() == self) main_thread.detach();
         else main_thread.join();
+    }
+    if (gpu_thread.joinable()) {
+        if (gpu_thread.get_id() == self) gpu_thread.detach();
+        else gpu_thread.join();
     }
     for (auto& thread : cpu_threads) {
         if (!thread.joinable()) continue;
@@ -767,7 +807,177 @@ void BitCrackEngine::cpuSearchWorker(int thread_id) {
     }
     Logger::info(std::string("[CPU") + std::to_string(thread_id) + "] Thread stopped");
 }
-void BitCrackEngine::gpuSearchWorker() {}
+void BitCrackEngine::gpuSearchWorker() {
+    if (!gpu_manager_ || !gpu_manager_->cudaReady()) return;
+    Logger::info("[GPU] Starting CUDA search worker");
+    gpu_search_used_.store(true, std::memory_order_release);
+
+    const uint64_t my_gen = run_gen_.load(std::memory_order_acquire);
+
+    int blocks = 0, tpb = 0;
+    uint64_t kpl = 0;
+    gpu_manager_->cudaRecommendedLaunch(blocks, tpb, kpl);
+    if (blocks <= 0) blocks = 4096;
+    if (tpb <= 0) tpb = 256;
+    if (kpl == 0) kpl = (uint64_t)blocks * tpb * 256ull;
+    // One engine batch feeds several kernel launches. Cap so getNextBatch's
+    // uint32 size and the 64-bit offset arithmetic below stay in range.
+    const uint64_t kMaxGpuBatch = 256ull * 1024 * 1024;  // 256M keys
+    uint32_t gpuBatch = (uint32_t)std::min<uint64_t>(std::max<uint64_t>(kpl, 1u), kMaxGpuBatch);
+
+    // hash160 (compressed pubkey) of a private key, hex-encoded, mirroring the
+    // CPU worker's reported target form. Thread-local crypto objects (this is
+    // the only GPU worker thread, but keep it off the shared members).
+    auto deriveHash160Hex = [](const std::string& key_hex) -> std::string {
+        static thread_local std::unique_ptr<EllipticCurve> ec;
+        static thread_local std::unique_ptr<AddressGenerator> ag;
+        if (!ec) ec = std::make_unique<EllipticCurve>();
+        if (!ag) ag = std::make_unique<AddressGenerator>();
+        ECPoint pub = ec->multiplyByG(key_hex);
+        const std::string pubhex = ag->publicKeyToHex(pub, true);
+        const std::vector<unsigned char> h = ag->publicKeyHexToHash160(pubhex);
+        std::ostringstream oss; oss << std::hex;
+        for (unsigned char b : h) oss << std::setw(2) << std::setfill('0') << (int)b;
+        return oss.str();
+    };
+
+    try {
+    while (running_ && !should_stop_ && run_gen_.load(std::memory_order_acquire) == my_gen) {
+        if (paused_) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); continue; }
+
+        std::string bs, be;
+        uint64_t batch_gen = 0;
+        {
+            std::lock_guard<std::mutex> g(range_mutex_);
+            batch_gen = range_gen_;
+        }
+        if (!getNextBatch(bs, be, gpuBatch)) {
+            // Same depletion rule as the CPU workers: the range counts as
+            // done only once every batch handed out has finished and all of
+            // its keys were scanned (C4), not when the last batch is handed out.
+            bool exhausted = false;
+            {
+                // Lock order: range_mutex_ -> state_mutex_ (never the reverse).
+                std::lock_guard<std::mutex> g(range_mutex_);
+                const KeyRange range = getCurrentRange();
+                if (range.start.empty() || range.end.empty()) exhausted = true;
+                else exhausted = fullyScannedLocked(range);
+            }
+            if (exhausted) {
+                bool expected = false;
+                if (notified_work_depleted_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+                    if (work_depleted_callback_) work_depleted_callback_();
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+        // Ends the batch however it is left; unless finishBatch() ran, the
+        // whole batch counts as unscanned and is queued again (C4).
+        struct FinishGuard {
+            BitCrackEngine* e;
+            uint64_t gen;
+            std::string s, t;
+            bool done = false;
+            ~FinishGuard() { if (!done) e->finishBatch(gen, s, t, false, s); }
+        } finish_guard{this, batch_gen, bs, be};
+
+        // count = (be - bs) + 1. A GPU batch is capped well inside uint64; a
+        // queued rest of a CPU batch is smaller still.
+        uint64_t count = 0;
+        try {
+            const std::string span = hexSubtractHex(HexMath::normalize(be), HexMath::normalize(bs));
+            count = span.empty() ? 0 : std::stoull(span, nullptr, 16);
+            count += 1;
+        } catch (...) { count = 0; }
+        secp_scan::U256 u;
+        if (count == 0 || !secp_scan::u256FromHex(HexMath::normalize(bs), u)) {
+            Logger::error("[GPU] Malformed batch range; skipping batch (range will not count as scanned)");
+            finish_guard.done = true;
+            batchDone();
+            continue;
+        }
+
+        unsigned char start32[32] = {0};
+        for (int i = 0; i < 4; ++i) {
+            const uint64_t w = u.v[3 - i];
+            for (int byte = 0; byte < 8; ++byte)
+                start32[i * 8 + byte] = (unsigned char)(w >> (56 - 8 * byte));
+        }
+
+        bool found = false;
+        bool failed = false;
+        std::string found_hex, found_addr;
+        uint64_t scanned = 0;  // keys bs .. bs+scanned-1 were scanned
+        const std::string norm_bs = HexMath::normalize(bs);
+        while (scanned < count && running_ && !should_stop_ && !paused_) {
+            const uint64_t chunk = std::min<uint64_t>(kpl, count - scanned);
+            std::vector<uint64_t> offs;
+            if (!gpu_manager_->cudaScanBatch(start32, scanned, chunk, blocks, tpb, offs)) {
+                failed = true;
+                break;
+            }
+            gpu_manager_->addKeysGenerated(chunk);
+            for (uint64_t off : offs) {
+                // Offsets are from the batch start (they already include the
+                // launch's base offset, see bcd_cuda_scan).
+                // checkKey() wants the 64-digit form (isValidPrivateKey);
+                // the short form failed host verification for every real match.
+                std::string khex = hexAddUint64(norm_bs, off);
+                if (khex.size() < 64) khex.insert(0, 64 - khex.size(), '0');
+                // Host verification: never trust a device candidate.
+                if (checkKey(khex)) {
+                    found = true;
+                    found_hex = khex;
+                    found_addr = deriveHash160Hex(khex);
+                    break;
+                }
+                Logger::warn("[GPU] device reported a candidate that failed host verification; ignoring");
+            }
+            if (found) break;
+            scanned += chunk;
+        }
+
+        // C4: count only what was really scanned; the rest of a batch cut
+        // short (stop, pause, a match or a device error) is queued again.
+        finish_guard.done = true;
+        if (found) {
+            finishBatch(batch_gen, bs, be, false, hexIncrement(found_hex));
+        } else if (scanned >= count) {
+            finishBatch(batch_gen, bs, be, true, std::string());
+        } else {
+            finishBatch(batch_gen, bs, be, false, hexAddUint64(norm_bs, scanned));
+        }
+
+        if (found) {
+            {
+                std::lock_guard<std::mutex> lk(stats_mutex_);
+                stats_.found_key = true;
+                stats_.found_private_key = found_hex;
+            }
+            Logger::info("[GPU] FOUND KEY! (private key withheld from logs)");
+            if (key_found_callback_) key_found_callback_(found_hex, found_addr);
+            should_stop_ = true;
+            break;
+        }
+        if (failed) {
+            // The CPU workers pick up the queued rest of this batch.
+            Logger::error("[GPU] scan batch failed; disabling GPU worker for this run");
+            if (config_.gpu_only) {
+                Logger::error("[GPU] GPU-only mode has no CPU workers to take over: this node is not "
+                              "scanning until the search restarts (next chunk) or the node is restarted");
+            }
+            break;
+        }
+        if (scanned >= count) markRangeComplete(bs, be);
+    }
+    } catch (const std::exception& e) {
+        Logger::error(std::string("[GPU] worker exception: ") + e.what());
+    } catch (...) {
+        Logger::error("[GPU] worker unknown exception");
+    }
+    Logger::info("[GPU] CUDA search worker stopped");
+}
 
 bool BitCrackEngine::checkKey(const std::string& private_key_hex) {
     const auto targets = targetsSnapshot();

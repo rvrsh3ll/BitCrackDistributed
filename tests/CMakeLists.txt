@@ -75,6 +75,9 @@ set(TEST_SOURCES
     test_commit_to_block.cpp
     test_consensus_keyspace_blocks.cpp
     test_chainstore.cpp
+    test_sync_fast_path.cpp
+    test_startup_checkpoint.cpp
+    test_sync_serve_pages.cpp
     test_logger_file.cpp
     # Orphaned consensus/claim/hydration tests
     test_chunk_claim_timeout.cpp
@@ -123,6 +126,8 @@ set(TEST_SOURCES
     test_alias_from_uuid.cpp
     # Persistent node key + known-peers pinning store
     test_node_identity.cpp
+    # Node id kept in node_id.json; node-key alias fallback; config.json restore
+    test_node_id_persist.cpp
     # AUTHCHALLENGE/AUTH handshake, peer_auth policy, older-peer fallback
     test_peer_auth_handshake.cpp
     # Fixed-width EC hex encodings (pubkeys, generated private keys)
@@ -179,6 +184,8 @@ set(TEST_SOURCES
     test_chainstore_restart.cpp
     test_block_sync.cpp
     test_node_api.cpp
+    # HTML dashboard + /history /system /events
+    test_dashboard_api.cpp
     support/TestIsolation.cpp
     # Standalone engine skips puzzles solved here at startup
     test_engine_startup_skip.cpp
@@ -194,19 +201,33 @@ set(TEST_SOURCES
     test_chunk_claim_book.cpp
     # Claim decisions in ClaimBook
     test_claim_book_votes.cpp
+    test_claim_accounting.cpp
     # Claim expiry/leases/peer loss in ClaimBook
     test_claim_book_expiry.cpp
     # Claim throttle / isClaimedBy in ClaimBook
     test_claim_book_throttle.cpp
     # Peer-message verb dispatch table
     test_verb_routes.cpp
+    # CUDA WP1: host/device base-field math (bcdgpu::Fe) vs OpenSSL BIGNUM
+    test_gpu_field.cpp
+    # CUDA WP2: host/device secp256k1 EC point ops (bcdgpu::Gej) vs OpenSSL + CPU kernel
+    test_gpu_ec.cpp
+    # CUDA WP3: host/device hashing, full per-key derivation + sorted target match
+    test_gpu_hash.cpp
+    test_gpu_scan.cpp
+    # CUDA WP3: real GPU device test (auto-skips without a CUDA GPU)
+    test_gpu_device.cpp
+    # GPU worker chunk accounting (host stand-in for the kernel, no GPU needed)
+    test_gpu_worker.cpp
+    test_gpu_only.cpp
+    # GPU nodes claim chunks sized from their measured rate
+    test_chunk_sizing.cpp
+    test_keyspace_api.cpp
+    test_payout_split.cpp
+    test_claim_span.cpp
+    test_chain_split.cpp
+    test_consensus_v4.cpp
 )
-
-if(GUI_AVAILABLE)
-    list(APPEND TEST_SOURCES test_gui_telemetry.cpp test_gui_log_thread.cpp
-        test_gui_close_shutdown.cpp)
-    message(STATUS "Including GUI telemetry test (requires Qt)")
-endif()
 
 add_executable(bitcrack_tests ${TEST_SOURCES})
 
@@ -219,13 +240,6 @@ target_link_libraries(bitcrack_tests PRIVATE
 add_executable(logger_file_runner logger_file_runner.cpp)
 add_dependencies(logger_file_runner BitCrackCore)
 target_link_libraries(logger_file_runner PRIVATE BitCrackCore)
-
-if(GUI_AVAILABLE)
-    target_link_libraries(bitcrack_tests PRIVATE BitCrackGUI)
-    # Link Qt Widgets as MainWindow uses Qt Widgets
-    set(_qt_prefix Qt${BITCRACK_QT_VERSION})
-    target_link_libraries(bitcrack_tests PRIVATE ${_qt_prefix}::Widgets ${_qt_prefix}::Core ${_qt_prefix}::Network)
-endif()
 
 if(TARGET GPUKernels)
     target_link_libraries(bitcrack_tests PRIVATE GPUKernels)

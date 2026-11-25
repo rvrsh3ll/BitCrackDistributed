@@ -1,0 +1,160 @@
+name: Windows build
+
+# Manual-only (never on push or pull_request). Builds the console exe with
+# MSVC, runs bitcrack_tests, smoke-tests the web dashboard, and uploads a
+# ready-to-run zip.
+# OpenSSL is pinned to 3.x through vcpkg (vcpkg.json builtin-baseline + the
+# VCPKG_COMMIT below): asio 1.30.2 does not compile against OpenSSL 4.
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_COMMIT: 22375ff854079e54bef8a72c25382c18ca126e36   # keep equal to vcpkg.json builtin-baseline
+  VCPKG_DEFAULT_TRIPLET: x64-windows
+
+jobs:
+  windows:
+    name: Windows console + dashboard
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-x64-windows
+
+      - name: Set up pinned vcpkg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'vcpkg'
+          git clone --quiet https://github.com/microsoft/vcpkg $root
+          git -C $root checkout --quiet $env:VCPKG_COMMIT
+          & "$root/bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed" }
+          $cache = Join-Path $env:RUNNER_TEMP 'vcpkg-cache'
+          New-Item -ItemType Directory -Force -Path $cache | Out-Null
+          "VCPKG_ROOT=$root" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S . -B build_win -G "Visual Studio 17 2022" -A x64 `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DDISABLE_CUDA=ON `
+            -DBITCRACK_COPY_BUILD_TO_DIST=OFF -DBITCRACK_BUILD_TESTS=ON `
+            -DBITCRACK_FORCE_FETCH_CATCH2=ON "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /DNOMINMAX" 2>&1 | Tee-Object -FilePath configure.log
+          if ($LASTEXITCODE -ne 0) { throw "configure failed" }
+          $ver = Select-String -Path configure.log -Pattern 'Found OpenSSL:.*found version "([^"]+)"' | Select-Object -First 1
+          Write-Host "OpenSSL: $($ver.Line)"
+          if (-not $ver -or -not $ver.Matches[0].Groups[1].Value.StartsWith('3.')) { throw "expected OpenSSL 3.x" }
+
+      - name: Save vcpkg binary cache
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-x64-windows
+
+      - name: Build app and tests
+        run: cmake --build build_win --config Release --target bitcrack_tests bitcrack-distributed -- /m:4
+
+      - name: Run tests
+        working-directory: build_win/Release
+        timeout-minutes: 30
+        shell: bash
+        # Output goes to a file, not a pipe: a leaked child process (a test
+        # spawns bitcrack-distributed.exe) can't keep the step waiting on EOF.
+        run: |
+          rc=0
+          timeout 25m ./bitcrack_tests.exe --reporter console --durations yes > "$GITHUB_WORKSPACE/tests.log" 2>&1 || rc=$?
+          grep -v '^\[' "$GITHUB_WORKSPACE/tests.log" || true
+          exit $rc
+
+      - name: Kill leftover test processes
+        if: always()
+        shell: pwsh
+        run: Get-Process bitcrack-distributed, bitcrack_tests -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+      - name: Package (OpenSSL + MSVC runtime)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = Join-Path $env:GITHUB_WORKSPACE 'pkg/bitcrack-distributed-windows-x64'
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item build_win/Release/bitcrack-distributed.exe "$pkg/bitcrack-distributed.exe"
+          $sslBin = Get-ChildItem -Recurse -Path build_win/vcpkg_installed/x64-windows/bin -Include 'libcrypto-3*.dll','libssl-3*.dll'
+          if ($sslBin.Count -lt 2) { throw "OpenSSL 3 DLLs not found in vcpkg_installed" }
+          $sslBin | ForEach-Object { Copy-Item $_.FullName $pkg }
+          $crt = 'msvcp140.dll','msvcp140_1.dll','msvcp140_2.dll','vcruntime140.dll','vcruntime140_1.dll','concrt140.dll'
+          foreach ($d in $crt) { $s = Join-Path $env:WINDIR "System32/$d"; if (Test-Path $s) { Copy-Item $s $pkg } }
+          Copy-Item README.md, LICENSE, docs/INSTALL_WINDOWS.md $pkg
+          @"
+          BitCrack Distributed - Windows x64 (CPU only, no CUDA)
+          Built from $env:GITHUB_SHA by GitHub Actions run $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
+          bitcrack-distributed.exe   Run from a terminal. Add --dashboard and open http://127.0.0.1:3339/ in a browser for the web dashboard.
+          OpenSSL 3 and the MSVC runtime DLLs are bundled; no installs needed.
+          "@ | Out-File -Encoding utf8 "$pkg/BUILD_INFO.txt"
+          Get-ChildItem -Recurse $pkg | ForEach-Object { $_.FullName.Substring($pkg.Length) } | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE/pkg/contents.txt"
+          Get-Content "$env:GITHUB_WORKSPACE/pkg/contents.txt"
+
+      - name: Smoke-test the packaged exe (clean PATH, no network)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = Join-Path $env:GITHUB_WORKSPACE 'pkg/bitcrack-distributed-windows-x64'
+          # Only Windows itself on PATH, so missing bundled DLLs fail here.
+          $env:PATH = "$env:WINDIR\System32;$env:WINDIR"
+          $cli = "$pkg/bitcrack-distributed.exe"
+          & $cli --version
+          if ($LASTEXITCODE -ne 0) { throw "--version exit $LASTEXITCODE" }
+          $derive = & $cli --derive-address 1 | Out-String
+          if (-not ($derive -match "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH")) { throw "derive-address known vector failed: $derive" }
+          & $cli --bench 5
+          if ($LASTEXITCODE -ne 0) { throw "--bench exit $LASTEXITCODE" }
+          # Dashboard: start a standalone node with --dashboard (P2P off, empty
+          # bootstrap list) and fetch the page and /status from it.
+          $tmp = Join-Path $env:RUNNER_TEMP 'dash-smoke'
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          $cfg = Join-Path $tmp 'config.json'
+          @{ data_directory = ($tmp -replace '\\','/'); reward_address = 'bc1qzarehesk3gnh9emgd4t7sjgsu7dwp79545c2nh'; network = @{ enable_p2p = $false; bootstrap_nodes = @(); enable_upnp = $false; bind_address = '127.0.0.1' } } |
+            ConvertTo-Json -Depth 5 | Out-File -Encoding ascii $cfg
+          $n = Start-Process -FilePath $cli -ArgumentList '--daemon','--dashboard','--config',$cfg -PassThru -RedirectStandardOutput (Join-Path $tmp 'out.log') -RedirectStandardError (Join-Path $tmp 'err.log')
+          $ok = $false
+          for ($i = 0; $i -lt 60 -and -not $ok; $i++) {
+            Start-Sleep -Seconds 1
+            try { $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 http://127.0.0.1:3339/; $ok = $r.Content -match '<title>BitCrack Distributed dashboard</title>' } catch {}
+          }
+          if (-not $ok) { Get-Content (Join-Path $tmp 'out.log') -Tail 40; Stop-Process -Id $n.Id -Force; throw "dashboard not served" }
+          $st = Invoke-RestMethod -TimeoutSec 5 http://127.0.0.1:3339/status
+          Write-Host "dashboard ok; status version $($st.version) commit $($st.commit)"
+          Stop-Process -Id $n.Id -Force
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitcrack-distributed-windows-x64
+          path: pkg/bitcrack-distributed-windows-x64
+          retention-days: 30
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-diagnostics
+          path: |
+            tests.log
+            configure.log
+            pkg/contents.txt
+          retention-days: 14

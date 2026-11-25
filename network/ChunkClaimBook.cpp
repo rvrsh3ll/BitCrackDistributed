@@ -339,7 +339,7 @@ void ClaimBook::addLease(const std::string& key, const std::string& chunk_id, co
                          const std::string& end_key, const std::string& holder, const std::string& local_alias) {
     if (holder.empty() || holder == local_alias) return;  // our own claims are not leased
     if (leases.count(key)) return;                       // duplicate approval: keep the first time
-    leases[key] = Lease{chunk_id, start_key, end_key, holder, Clock::now()};
+    leases[key] = Lease{chunk_id, start_key, end_key, holder, Clock::now(), next_lease_seq++};
 }
 
 // The expiry, lease and peer-loss parts, moved from NetworkManager
@@ -400,6 +400,40 @@ void ClaimBook::noteHolderCompletion(const std::string& holder, const std::strin
             ++it;
         }
     }
+}
+
+bool ClaimBook::releaseClaim(const std::string& key, const std::string& holder) {
+    leases.erase(key);
+    if (claimed.erase(key) == 0) return false;
+    decrementCount(claimed_count, holder);
+    return true;
+}
+
+std::vector<Lease> ClaimBook::takeSupersededLeases(const std::string& holder, const std::string& start_key,
+                                                   const std::string& end_key) {
+    std::vector<Lease> superseded;
+    if (holder.empty()) return superseded;
+    const Lease* done = nullptr;
+    for (const auto& kv : leases) {
+        const Lease& l = kv.second;
+        if (l.holder == holder && l.start_key == start_key && l.end_key == end_key) {
+            done = &l;
+            break;
+        }
+    }
+    if (!done) return superseded;
+    const uint64_t done_seq = done->seq;
+    for (auto it = leases.begin(); it != leases.end();) {
+        const Lease& l = it->second;
+        if (l.holder != holder || l.seq >= done_seq) {
+            ++it;
+            continue;
+        }
+        superseded.push_back(l);
+        if (claimed.erase(it->first) > 0) decrementCount(claimed_count, holder);
+        it = leases.erase(it);
+    }
+    return superseded;
 }
 
 uint64_t ClaimBook::leaseSeconds(const Lease& lease, uint64_t min_s, uint64_t factor) const {

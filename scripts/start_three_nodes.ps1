@@ -2,12 +2,12 @@ param(
 	[string]$ExePath
 )
 
-$base = Join-Path (Get-Location) 'dist/windows/gui'
+$base = Join-Path (Get-Location) 'dist/windows/cli'
 
-# Prefer the packaged GUI exe in dist/windows/gui unless the caller passed an explicit ExePath
+# Prefer the packaged CLI exe in dist/windows/cli unless the caller passed an explicit ExePath
 if (-not $ExePath) {
-	$candidate = Join-Path $base 'bitcrack-distributed-gui.exe'
-	if (Test-Path $candidate) { $ExePath = $candidate; Write-Host "Using GUI exe: $ExePath" } else { $ExePath = Join-Path $base 'bitcrack-distributed-gui.exe' }
+	$candidate = Join-Path $base 'bitcrack-distributed-cli.exe'
+	if (Test-Path $candidate) { $ExePath = $candidate; Write-Host "Using CLI exe: $ExePath" } else { $ExePath = Join-Path $base 'bitcrack-distributed-cli.exe' }
 } else { Write-Host "Using provided ExePath: $ExePath" }
 $exe = $ExePath
 $node1cfg = Join-Path $base 'node1_config.json'

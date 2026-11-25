@@ -48,6 +48,11 @@ void Logger::initialize(Level level) {
     current_level_ = level;
 }
 
+std::string Logger::snippet(const std::string& s, size_t max) {
+    if (s.size() <= max) return s;
+    return s.substr(0, max) + "...(" + std::to_string(s.size()) + " bytes)";
+}
+
 void Logger::setLogCallback(LogCallback callback) {
     // Waits for a running invocation of the previous callback to finish.
     std::lock_guard<std::mutex> lk(s_legacy_callback_mutex);

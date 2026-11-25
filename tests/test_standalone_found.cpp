@@ -77,9 +77,13 @@ Child spawn(const std::vector<std::string>& args, const fs::path& out, const fs:
         if (i) cmdline += ' ';
         cmdline += '"' + args[i] + '"';
     }
-    HANDLE hout = CreateFileA(out.string().c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+    // The child only receives the redirect handles if they are inheritable.
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE hout = CreateFileA(out.string().c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    HANDLE herr = CreateFileA(err.string().c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+    HANDLE herr = CreateFileA(err.string().c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     STARTUPINFOA si{};
     si.cb = sizeof(si);
@@ -169,6 +173,12 @@ void terminate(Child& c, int* code) {
 #endif
 }
 
+// Ends the child when a REQUIRE leaves the test early, so no node is leaked.
+struct Reaper {
+    Child& c;
+    ~Reaper() { terminate(c, nullptr); }
+};
+
 // Polls `pred` every 100 ms up to `timeout_s`; returns whether it held.
 bool waitFor(const std::function<bool()>& pred, int timeout_s) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_s);
@@ -214,7 +224,7 @@ TEST_CASE("standalone: planted key is found, journaled owner-only, and resumed a
         std::ofstream c(config);
         c << "{\n"
           << "  \"reward_address\": \"1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2\",\n"
-          << "  \"data_directory\": \"" << (dir / "data").string() << "\",\n"
+          << "  \"data_directory\": \"" << (dir / "data").generic_string() << "\",\n"
           << "  \"cpu_thread_count\": 2,\n"
           << "  \"bitcoin_backend\": \"none\",\n"
           << "  \"bitcoin_rpc_url\": \"\",\n"
@@ -239,6 +249,7 @@ TEST_CASE("standalone: planted key is found, journaled owner-only, and resumed a
     const fs::path journal = dir / "data" / "puzzle00FoundKey.log";
 
     Child child = spawn(args, out1, err1);
+    Reaper reap1{child};
 #ifdef _WIN32
     REQUIRE(child.valid);
 #else
@@ -301,6 +312,7 @@ TEST_CASE("standalone: planted key is found, journaled owner-only, and resumed a
     const fs::path out2 = dir / "run2.out";
     const fs::path err2 = dir / "run2.err";
     Child child2 = spawn(args2, out2, err2);
+    Reaper reap2{child2};
     const bool resumed = waitFor(
         [&] {
             const std::string log = slurp(out2) + slurp(err2);
@@ -337,6 +349,7 @@ TEST_CASE("standalone: --derive-address prints the known vector for key 1", "[st
     const fs::path err = dir / "derive.err";
     std::vector<std::string> args{BITCRACK_MAIN_BINARY, "--derive-address", "1"};
     Child child = spawn(args, out, err);
+    Reaper reap{child};
     int rc = -1;
     const bool done = waitFor([&] { return exited(child, &rc); }, 30);
     REQUIRE(done);

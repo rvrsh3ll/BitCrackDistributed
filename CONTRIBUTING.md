@@ -6,7 +6,7 @@ Thanks for helping improve BitCrack Distributed. Please follow the lightweight g
 - Use a recent CMake (3.18+) and a C++17 compiler.
 - Windows: `./build.bat` (Visual Studio 2022). POSIX: `cmake -S . -B build && cmake --build build --config Release`.
 - Optional GPU: install CUDA (NVIDIA) or OpenCL SDK (AMD/Intel/NVIDIA).
-- Optional GUI: install Qt 6.5+ and ensure `Qt6_DIR` (or `Qt5_DIR`) is set.
+- No GUI toolkit is needed: the node's UI is the built-in web dashboard (`--dashboard`; page source in `network/dashboard/dashboard.html`, embedded at build time).
 
 ## Tests
 - Catch2 v3 is optional. To force fetch and build tests: set `-DBITCRACK_FORCE_FETCH_CATCH2=ON` at configure time.

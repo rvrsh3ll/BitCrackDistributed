@@ -42,6 +42,7 @@ typedef int SOCKET;
 #include "KeyspaceBlock.h"
 #include "KeyspaceChainStore.h"
 #include "RewardSystem.h"
+#include "ChainSplit.h"
 #include "P2PKeyspaceManager.h"
 #include "WorkCoordinator.h"
 #include "PuzzleManager.h"
@@ -163,6 +164,52 @@ public:
     static void setOutboundDialGuardForTest(std::function<bool(const std::string&, int)> guard);
     ChunkSummary getChunkSummary() const;
     ConsensusEngine::ChainSnapshot getChainSnapshot() const { return consensus_engine_.getChainSnapshot(); }
+    // Stats API keyspace map sources (copies; safe from any thread).
+    std::vector<ConsensusEngine::RangeCommitment> getBestChainCommitments() const {
+        return consensus_engine_.bestChainCommitments();
+    }
+    // The payout split derived from the best chain (chain_split::compute)
+    // for a puzzle range, with each miner_id's reward address from this
+    // node's address book (REWARDADDR announcements; an alias that is a
+    // reward-address prefix, as older builds used, maps to the one known
+    // address with that prefix). Contributions have keys_checked = chain
+    // keys and chunks_completed = commitments.
+    struct ChainSplitView {
+        chain_split::Result raw;
+        std::vector<RewardSystem::PeerContribution> contributions;
+        uint64_t total_keys = 0;
+    };
+    ChainSplitView chainSplitFor(const std::string& range_start, const std::string& range_end) const;
+    // Peers check a finder's PAYOUT against the chain split (local flag only).
+    struct PayoutCheck {
+        uint32_t puzzle = 0;
+        std::string from_alias;      // who sent the PAYOUT
+        std::string finder;          // solver alias (KEYFOUND) or from_alias
+        std::string finder_address;  // solver address, or the largest output
+        bool checked = false;        // false: no chain data to check against
+        bool ok = true;
+        uint64_t announced_total = 0;
+        struct Mismatch { std::string address; uint64_t expected = 0; uint64_t got = 0; };
+        std::vector<Mismatch> mismatches;
+        std::string note;
+    };
+    std::vector<PayoutCheck> getPayoutChecks() const;
+    // The claim cap applied to chain commitments in the split (0 = none).
+    uint64_t chainSplitClaimCap() const;
+    // The payout pool: the chain split, or the local ledger if the chain has
+    // no commitments for the puzzle.
+    void payoutPoolFor(const PuzzleInfo& puzzle, std::vector<RewardSystem::PeerContribution>& pool,
+                       uint64_t& total_keys) const;
+    // Compares announced outputs with the chain-derived split (computed on
+    // the announced total, so the pro-rata fee cancels). An address the split
+    // gives at least the dust floor that receives less than expected minus a
+    // tolerance (0.5% or 600 sats) is a mismatch. Records and returns it.
+    PayoutCheck checkPayoutAgainstChain(const std::vector<PayoutOutput>& outputs, uint32_t puzzle,
+                                        const std::string& finder_alias, const std::string& finder_address,
+                                        const std::string& from_alias);
+    struct LedgerRange { std::string start, end, peer; uint64_t keys = 0; bool rewarded = true; };
+    std::vector<LedgerRange> getCompletedLedger() const;
+    size_t getCompletedLedgerCount() const;
     
     // Work coordination
     void initializeWork(const std::string& target_address,
@@ -181,8 +228,15 @@ public:
     uint64_t getAssignedChunks() const { return p2p_keyspace_manager_.getAssignedRanges(getLocalAlias()).size(); }
     size_t getPersistedBlockCount() const;
     std::string getLocalAlias() const;
-    // uuid first, then reward-address prefix, then "Anonymous".
-    static std::string deriveLocalAlias(const std::string& node_uuid, const std::string& reward_address);
+    // Node id (config.json uuid or <data_dir>/node_id.json) first, then the
+    // node-key alias (aliasFromPubkey), then the reward-address prefix, then
+    // "Anonymous". The address prefix is shared by every node paying to one
+    // address, so it is only a last resort (no data dir and no key).
+    static std::string deriveLocalAlias(const std::string& node_uuid, const std::string& reward_address,
+                                        const std::string& key_alias);
+    static std::string deriveLocalAlias(const std::string& node_uuid, const std::string& reward_address) {
+        return deriveLocalAlias(node_uuid, reward_address, std::string());
+    }
     std::string getCurrentChunkId() const { std::lock_guard<std::mutex> lk(state_mutex_); return current_chunk_id_; }
     uint64_t getCurrentChunkSize() const { std::lock_guard<std::mutex> lk(state_mutex_); return last_chunk_size_; }
     // Local node's currently assigned chunk bounds (empty when idle)
@@ -211,6 +265,10 @@ public:
     BitcoinWallet* getWallet() const { return bitcoin_wallet_.get(); }
     BitcoinWallet* getBitcoinWallet() const { return bitcoin_wallet_.get(); }
     bool tryPopPuzzleSolvedEvent(PuzzleSolvedEvent& evt);
+    // The last kMaxSolvedEvents puzzle-solved events, oldest first, with
+    // private_key always cleared (for the stats API). Does not consume them.
+    std::vector<PuzzleSolvedEvent> recentPuzzleSolvedEvents() const;
+    static constexpr size_t kMaxSolvedEvents = 50;
     
     // Payout estimation
     double getEstimatedFinderPayout() const;      // 90% of puzzle balance if this node finds the key
@@ -220,6 +278,11 @@ public:
     // Consensus-based chunk claiming (public for GUI trigger). Returns true if
     // a new proposal was sent.
     bool tryClaimNextChunk();
+    // Chunk sizing, for tests: the measured rate (keys/s) and the size the
+    // next claim would use.
+    void setMeasuredRateForTest(double keys_per_s) { std::lock_guard<std::mutex> lk(state_mutex_); measured_rate_ = keys_per_s; }
+    double measuredRateForTest() const { std::lock_guard<std::mutex> lk(state_mutex_); return measured_rate_; }
+    uint64_t chunkSizeForNextClaimForTest() { return chunkSizeForNextClaim(); }
 
 private:
         // Request a state sync from a peer (stub: implement actual sync logic as needed)
@@ -347,6 +410,8 @@ private:
     void handleGetBlocks(const std::string& peer_alias, const std::vector<std::string>& locators);
     void handleHeaders(const std::string& peer_alias, const std::vector<ConsensusEngine::BlockHeader>& headers);
     void handleGetData(const std::string& peer_alias, const std::vector<std::string>& hashes);
+    // The GETDATA reply for `hashes`: BLOCK lines in sends of at most kGetDataReplyBlocks.
+    std::vector<std::string> getDataReplyBatches(const std::vector<std::string>& hashes) const;
     void handleBlock(const std::string& peer_alias, const ConsensusEngine::Block& block);
     void handleCommitMessage(const std::string& peer_alias, const std::string& payload);
     // Assemble qualified blocks from pending commits (testable helper)
@@ -379,7 +444,17 @@ private:
     static std::vector<std::string> splitString(const std::string& payload, char delimiter);
     // Rebuilds the chain from this node's own persisted blocks at
     // startup (after genesis); returns how many linked.
-    size_t replayPersistedBlocks(const std::vector<KeyspaceBlock>& blocks, const std::string& source);
+    // `trusted`: chainstore record hashes (KeyspaceChainStore::recordHash)
+    // inside the store's integrity-checked verified prefix; their v4
+    // attestation signatures are not verified again (every other check is).
+    size_t replayPersistedBlocks(const std::vector<KeyspaceBlock>& blocks, const std::string& source,
+                                 const std::unordered_set<std::string>* trusted = nullptr);
+    // Extends the chainstore's verified prefix over the stored records that
+    // are in the consensus chain (accepted with full checks). `linked`: record
+    // hashes already known to be in it (the startup replay). force=false runs
+    // at most once per kCheckpointInterval.
+    void refreshChainstoreCheckpoint(const std::unordered_set<std::string>* linked = nullptr, bool force = true);
+    static constexpr std::chrono::seconds kCheckpointInterval{30};
     // Block sync helpers.
     std::string blockLocatorPayload() const;
     bool markBlockRequestedLocked(const std::string& hash);  // consensus_mutex_ held
@@ -401,6 +476,8 @@ private:
     BitCrackEngine* engine_;
 
     std::atomic<bool> running_;
+    // tryClaimNextChunk is single-flight (two triggers proposed two chunks).
+    std::atomic<bool> claim_attempt_in_flight_{false};
     SOCKET server_socket_;
 
     std::thread server_thread_;
@@ -460,6 +537,7 @@ private:
     std::string local_alias_{};
     mutable std::mutex alias_mutex_;  // leaf lock: local_alias_ changes in setRewardAddress
     std::string reward_prefix_alias_;  // the alias older builds used (reward address prefix)
+    std::string key_alias_;            // aliasFromPubkey(node key); set once in the constructor
     std::string legacyLocalAlias() const;
     
     // Genesis node detection (informational only; logged by initializeWork)
@@ -517,11 +595,25 @@ private:
     // When each block was last requested (re-requested after a timeout).
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> requested_blocks_;
     static constexpr auto kBlockRequestTimeout = std::chrono::seconds(30);
-    static constexpr size_t kSyncHeadersBatch = 64;  // handleGetBlocks page size (same on older nodes)
+    // A HEADERS page with at least this many headers may have more behind it,
+    // so the client asks for the next page. 64 is what older nodes serve, so
+    // it stays the threshold even though this node serves bigger pages.
+    static constexpr size_t kSyncHeadersBatch = 64;
+    // Headers this node serves per GETBLOCKS (older nodes: 64). One round
+    // trip per page dominated a fresh node's sync.
+    static constexpr size_t kSyncHeadersServe = 512;
+    // GETDATA replies go out in sends of at most this many BLOCK lines, each
+    // with its own bounded send wait, so a slow link cannot cut a reply off
+    // mid-line (and other peers' traffic interleaves between them).
+    static constexpr size_t kGetDataReplyBlocks = 64;
+    size_t sync_headers_serve_ = kSyncHeadersServe;  // tests emulate older peers with 64
     std::unordered_map<std::string, uint64_t> sync_page_height_;  // per peer: last page's top height
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> sync_request_at_;
     std::unordered_set<std::string> persisted_block_hashes_;  // consensus hashes in chain_store_
     size_t last_replay_unlinked_ = 0;
+    size_t last_replay_trusted_ = 0;  // blocks the last replay took from the verified prefix
+    std::mutex checkpoint_mutex_;
+    std::chrono::steady_clock::time_point checkpoint_at_{};
     std::mutex block_orphan_mutex_;
     std::unordered_map<std::string, std::vector<ConsensusEngine::Block>> block_orphans_;  // by parent
     size_t block_orphan_count_ = 0;
@@ -540,6 +632,10 @@ private:
         uint64_t claimLeaseSecondsLocked(const ClaimLease& lease) const;
         // Expires leases that ran out at `now`; returns how many claims it dropped.
         size_t expireStalledClaims(std::chrono::steady_clock::time_point now);
+        // A holder's verified completion: drops its leased claims approved
+        // before the completed one (left unsearched) and hands them out again.
+        size_t releaseSupersededClaims(const std::string& holder, const std::string& start_key,
+                                       const std::string& end_key);
         static constexpr int MAX_CHUNKS_PER_PEER = chunk_claim::kMaxChunksPerPeer;
         static constexpr int BUFFERED_VOTE_TIMEOUT_SEC = chunk_claim::kBufferedVoteTimeoutSec;
         // Reprocess votes after new proposal added; returns the claims they finalized.
@@ -553,6 +649,7 @@ private:
     // Puzzle-solved notification state
     mutable std::mutex puzzle_event_mutex_;
     std::deque<PuzzleSolvedEvent> puzzle_solved_events_;
+    std::deque<PuzzleSolvedEvent> recent_solved_events_;  // private_key cleared; never popped
     uint32_t last_solver_puzzle_ = 0;
     std::string last_solver_alias_{};
     std::string last_solver_address_{};
@@ -621,14 +718,21 @@ private:
     static std::string doubleSha256Hex(const std::string& data);
     bool parseSignedContribution(const std::string& payload, ContributionClaim& out_claim) const;
 
-    // Reward distribution helpers
-    std::vector<PayoutOutput> computeProportionalPayouts(uint64_t total_balance, 
+    // Reward distribution: the finder's reward address gets finder_pct of
+    // the balance; the rest (the pool) is split among the OTHER contributors
+    // by keys scanned. The finder (its node id finder_peer, and any
+    // contributor paid to finder_address) takes no pool share and its keys
+    // are left out of the split. Parts that cannot be paid (no valid
+    // address) and rounding go to the finder.
+    std::vector<PayoutOutput> computeProportionalPayouts(uint64_t total_balance,
                                                           const std::string& finder_address,
-                                                          double finder_pct);
+                                                          double finder_pct,
+                                                          const std::string& finder_peer = std::string());
     std::vector<PayoutOutput> computeProportionalPayouts(uint64_t total_balance, const std::string& finder_address,
                                                           double finder_pct,
                                                           const std::vector<RewardSystem::PeerContribution>* contributions,
-                                                          uint64_t total_keys);
+                                                          uint64_t total_keys,
+                                                          const std::string& finder_peer = std::string());
 
     // The direct payout as a job. A failed balance lookup, build,
     // broadcast or confirmation check is retried with exponential backoff
@@ -682,6 +786,33 @@ private:
     void markPuzzlesSolvedHere(const std::map<uint32_t, std::string>& solved);
     std::mutex payout_run_mutex_;  // one payout step at a time
     std::mutex payout_mutex_;      // guards pending_payouts_, payout_stop_
+    // Consensus v4 commit quorum (see NetworkManager.cpp, COMMITATT).
+    struct OwnCommitment {
+        std::string start, end;
+        uint64_t keys = 0;
+        std::map<std::string, CommitAttestation> atts;  // by attester pubkey
+        std::chrono::steady_clock::time_point created{};
+    };
+    mutable std::mutex own_commit_mutex_;
+    std::map<std::string, OwnCommitment> own_commitments_;
+    std::map<std::string, std::map<std::string, CommitAttestation>> early_attestations_;
+    std::unordered_set<std::string> seen_attestations_;
+    std::deque<std::string> seen_attestation_order_;
+    std::atomic<uint64_t> attestations_sent_{0};
+    static constexpr std::chrono::minutes kOwnCommitmentTtl{30};
+    static constexpr uint64_t kV4AttestLead = 100;  // blocks before activation we start attesting
+    bool v4ActiveForNextBlock() const;
+    static std::string ownCommitmentKey(const std::string& start, const std::string& end, uint64_t keys);
+    bool rememberAttestation(const std::string& sig);
+    void attestCompletion(const std::string& start, const std::string& end, uint64_t keys, const std::string& miner);
+    void handleCommitAttestation(const std::string& peer_alias, const std::string& payload, uint64_t sender_peer_id);
+    void queueOwnCommitment(const std::string& start, const std::string& end, uint64_t keys);
+    bool tryMintOwnCommitment(const std::string& key);
+    void expireOwnCommitments();
+    size_t pendingOwnCommitments() const;
+    mutable std::mutex payout_checks_mutex_;
+    std::vector<PayoutCheck> payout_checks_;   // newest last, at most kMaxPayoutChecks
+    static constexpr size_t kMaxPayoutChecks = 32;
     std::condition_variable payout_cv_;
     std::map<uint32_t, PendingPayout> pending_payouts_;
     bool payout_stop_ = false;
@@ -722,6 +853,14 @@ private:
     std::string last_range_start_{};
     std::string last_range_end_{};
     uint64_t last_chunk_size_ = 0;
+    // Chunk sizing (ChunkSizing.h), under state_mutex_: when the engine
+    // started on our current chunk, and this node's measured rate.
+    std::chrono::steady_clock::time_point own_chunk_started_{};
+    std::string own_chunk_timed_;  // "start|end" of the chunk being timed
+    double measured_rate_ = 0.0;   // keys/s over the last completed own chunk
+    uint64_t last_claim_size_ = 0; // last size handed to the coordinator (for logging)
+    void noteOwnChunkStartedLocked(const std::string& start_key, const std::string& end_key);
+    uint64_t chunkSizeForNextClaim();
 
     // Persisted consensus view of completed keyspace
     std::unique_ptr<KeyspaceChainStore> chain_store_;

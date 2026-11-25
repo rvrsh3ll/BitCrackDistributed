@@ -37,6 +37,8 @@ public:
     std::vector<PeerContribution> getContributions() const;
     uint64_t getTotalKeysChecked() const;
     std::string getPeerRewardAddress(const std::string& peer_id) const;
+    // peer_id -> reward address, every address known (a copy).
+    std::unordered_map<std::string, std::string> rewardAddressBook() const;
     
     bool save(const std::string& filepath) const;
     bool load(const std::string& filepath);

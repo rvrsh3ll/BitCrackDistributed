@@ -121,3 +121,8 @@ node_modules/
 .Trashes
 # Linux
 *~
+# Python caches, editor/backup leftovers
+__pycache__/
+*.pyc
+*.bak
+config.json.broken*

@@ -17,6 +17,7 @@ set(_BITCRACK_CORE_SOURCE_CANDIDATES
     ShutdownSignal.cpp
     RewardAddress.cpp
     HexMath.cpp
+    ClaimCheck.cpp
     NodeIdentity.cpp
     SecretFile.cpp
 )
@@ -40,6 +41,7 @@ set(_BITCRACK_CORE_HEADER_CANDIDATES
     ${CMAKE_SOURCE_DIR}/include/ShutdownSignal.h
     ${CMAKE_SOURCE_DIR}/include/RewardAddress.h
     ${CMAKE_SOURCE_DIR}/include/HexMath.h
+    ${CMAKE_SOURCE_DIR}/include/ClaimCheck.h
     ${CMAKE_SOURCE_DIR}/include/NodeIdentity.h
     ${CMAKE_SOURCE_DIR}/include/SecretFile.h
 )

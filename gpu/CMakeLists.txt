@@ -50,15 +50,25 @@ if(NOT GPU_SOURCES)
     list(APPEND GPU_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/dummy_gpu.cpp)
 endif()
 
+# CUDA_AVAILABLE must never be ON without the CUDA language enabled: the .cu
+# kernels would not be compiled and the link would fail with undefined
+# bcd_cuda_* symbols. The top-level CMakeLists guarantees this; keep the check
+# so a future change cannot silently reintroduce that failure mode.
+if(CUDA_AVAILABLE AND NOT CMAKE_CUDA_COMPILER)
+    message(FATAL_ERROR
+        "CUDA_AVAILABLE is ON but no CUDA compiler is enabled (CMAKE_CUDA_COMPILER unset). "
+        "Pass -DCMAKE_CUDA_COMPILER=/path/to/nvcc or -DDISABLE_CUDA=ON.")
+endif()
+
 # CUDA kernel files
 set(CUDA_KERNEL_SOURCES "")
 if(CUDA_AVAILABLE)
+    # The real search kernel is self-contained (it pulls all secp256k1/field,
+    # hashing and matching from include/bcdgpu/). The former per-primitive .cu
+    # files were synthetic stubs that could not even link together (duplicate
+    # symbols); they are intentionally excluded from the build.
     set(_CUDA_KERNEL_CANDIDATES
-        kernels/bitcrack.cu
-        kernels/secp256k1.cu
-        kernels/hash160.cu
-        kernels/ripemd160.cu
-        kernels/sha256.cu
+        kernels/bitcrack_scan.cu
     )
     foreach(KERNEL ${_CUDA_KERNEL_CANDIDATES})
         if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${KERNEL})
@@ -111,15 +121,29 @@ if(CUDA_AVAILABLE)
     # Prefer PTX (virtual) for forward-compatibility and include recent SMs.
     # Avoid hard-binding to a single SASS that might not match end-user GPUs (e.g., RTX 5080).
     # This builds PTX for multiple targets so newer drivers JIT appropriately.
-    set_property(TARGET GPUKernels PROPERTY CUDA_ARCHITECTURES "89-virtual;90-virtual;100-virtual")
+    # Architectures come from BITCRACK_CUDA_ARCH (top-level CMakeLists), which
+    # defaults to a portable "75;86;89;120" spread (120 = RTX 5070 / Blackwell)
+    # and is validated there against the CUDA toolkit version.
+    set_property(TARGET GPUKernels PROPERTY CUDA_ARCHITECTURES "${BITCRACK_CUDA_ARCH}")
     
     # Link CUDA driver API only (avoid CUDA Runtime API / cudart).
     # On some systems, cudart entrypoints (cudaGetDeviceCount/cudaSetDevice) can hard-terminate
     # the process when driver/runtime mismatch occurs. Using the driver API (cuInit/cuDeviceGetCount)
     # is typically more robust.
     find_package(CUDAToolkit REQUIRED)
-    set_property(TARGET GPUKernels PROPERTY CUDA_RUNTIME_LIBRARY None)
-    target_link_libraries(GPUKernels CUDA::cuda_driver)
+    # The real search kernel (kernels/bitcrack_scan.cu) uses the CUDA Runtime
+    # API (cudaMalloc/cudaMemcpy/<<<>>>), so link cudart. The driver API is
+    # still used by the out-of-process probe, so keep cuda_driver too.
+    set_property(TARGET GPUKernels PROPERTY CUDA_RUNTIME_LIBRARY Shared)
+    # Whole-program (non-separable) compilation: bitcrack_scan.cu is a single
+    # self-contained translation unit, so no device link is needed. With
+    # separable compilation every consumer (bitcrack-distributed, BitCrackGUI,
+    # bitcrack_tests) ran its own nvcc -dlink, the GUI archive carried a second
+    # copy of the registration, and whether a target linked depended on the
+    # order of libBitCrackGUI.a vs libGPUKernels.a on its link line
+    # (bitcrack_tests: undefined __cudaRegisterLinkedBinary_*).
+    set_property(TARGET GPUKernels PROPERTY CUDA_SEPARABLE_COMPILATION OFF)
+    target_link_libraries(GPUKernels CUDA::cudart CUDA::cuda_driver)
     target_compile_definitions(GPUKernels PRIVATE CUDA_AVAILABLE)
     
     message(STATUS "CUDA kernels will be compiled for multiple architectures")

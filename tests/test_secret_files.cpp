@@ -4,6 +4,9 @@
 
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifdef _WIN32
+#include <io.h>  // _umask
+#endif
 
 #include <atomic>
 #include <cctype>
@@ -33,11 +36,19 @@ using TA = NetworkManagerTestAccess;
 
 namespace {
 
+#ifdef _WIN32
+// Windows has no mode bits: report 0600 for an owner-only DACL, 0644 otherwise.
+unsigned mode(const fs::path& p) {
+    REQUIRE(fs::exists(p));
+    return secret_file::isGroupOrOtherAccessible(p.string()) ? 0644u : 0600u;
+}
+#else
 unsigned mode(const fs::path& p) {
     struct stat st;
     REQUIRE(::stat(p.c_str(), &st) == 0);
     return st.st_mode & 0777;
 }
+#endif
 
 std::string slurp(const fs::path& p) {
     std::ifstream f(p);
@@ -48,7 +59,16 @@ std::string slurp(const fs::path& p) {
 
 void touch(const fs::path& p, unsigned m, const std::string& content = "x\n") {
     std::ofstream(p) << content;
+#ifdef _WIN32
+    if (m & 077) {  // expose to Everyone (*S-1-1-0, locale-independent)
+        const std::string cmd = "icacls \"" + p.string() + "\" /grant *S-1-1-0:R >nul 2>&1";
+        REQUIRE(std::system(cmd.c_str()) == 0);
+    } else {
+        secret_file::restrictToOwner(p.string());
+    }
+#else
     REQUIRE(::chmod(p.c_str(), m) == 0);
+#endif
 }
 
 struct TempDir {

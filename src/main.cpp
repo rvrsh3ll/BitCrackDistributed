@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "BitCrackEngine.h"
+#include "GPUManager.h"
 #include "NetworkManager.h"
 #include "NodeApi.h"
 #include "NodeStats.h"
@@ -43,49 +44,12 @@
 #include <deque>
 #include <random>
 
-#ifdef GUI_AVAILABLE
-#include "MainWindow.h"
-#include <QApplication>
-#include <QTimer>
-#endif
-
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 
-// GUI-enabled Windows builds link as WIN32_EXECUTABLE (no console subsystem),
-// so the packaged "CLI" copy prints into the void when run from a terminal.
-// Attach to the parent console for console/daemon modes and rebind the C
-// streams; a double-clicked GUI exe has no parent console and stays quiet.
-static void attachParentConsoleIfNeeded(int argc, char* argv[]) {
-    bool gui_flag = false;
-    bool console_flag = false;
-    for (int i = 1; i < argc; ++i) {
-        const std::string a = argv[i];
-        if (a == "--gui") gui_flag = true;
-        else if (a == "--console") console_flag = true;
-    }
-    bool gui = gui_flag;
-    if (!gui && !console_flag && argc > 0 && argv[0]) {
-        // Same exe-name fallback as parseCommandLine's GUI detection.
-        std::string exe = std::filesystem::path(argv[0]).filename().string();
-        std::transform(exe.begin(), exe.end(), exe.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (exe.find("gui") != std::string::npos) gui = true;
-    }
-    if (gui) return;
-    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
-        FILE* dummy = nullptr;
-        freopen_s(&dummy, "CONOUT$", "w", stdout);
-        freopen_s(&dummy, "CONOUT$", "w", stderr);
-        freopen_s(&dummy, "CONIN$", "r", stdin);
-        std::cout.clear();
-        std::cerr.clear();
-        std::cin.clear();
-    }
-}
 #endif  // _WIN32
 
 // A command-line mistake. Its message has already been printed once
@@ -169,6 +133,65 @@ static int runBenchmarkMain(int seconds) {
         std::cout << "Rate: " << std::fixed << std::setprecision(2) << (double)res.keys_scanned / secs / 1e6
                   << " Mkeys/s per core\n";
     }
+    return 0;
+}
+
+// --gpu-bench [seconds]: CUDA search throughput. Prints a clear message and
+// exits 0 when no CUDA device is present (e.g. a CPU-only build or no GPU).
+static int runGpuBenchmarkMain(int seconds) {
+    Config config;
+    config.gpu.enable_cuda = true;
+    config.gpu.disable_gpu = false;
+    GPUManager gpu(config, nullptr);
+    if (!gpu.initialize()) {
+        std::cout << "No GPU device found (or CUDA not built in); nothing to benchmark.\n";
+        return 0;
+    }
+    gpu.startKeyGeneration();
+    if (!gpu.cudaReady()) {
+        std::cout << "No CUDA device ready; nothing to benchmark. "
+                     "(Build with CUDA and run on a CUDA GPU.)\n";
+        gpu.stopKeyGeneration();
+        return 0;
+    }
+
+    int blocks = 0, tpb = 0;
+    uint64_t kpl = 0;
+    gpu.cudaRecommendedLaunch(blocks, tpb, kpl);
+    if (kpl == 0) kpl = 1ull << 20;
+    std::cout << "--- CUDA scan kernel benchmark ---\n"
+              << "Launch geometry: " << blocks << " blocks x " << tpb
+              << " threads, " << kpl << " keys/launch\n";
+
+    // No targets (we are measuring throughput, not matching). Scan from a
+    // random start for the requested wall-clock duration.
+    std::vector<std::array<unsigned char,20>> no_targets;
+    gpu.setBinaryTargets(no_targets);
+
+    unsigned char start[32] = {0};
+    std::random_device rd;
+    for (int i = 0; i < 32; ++i) start[i] = (unsigned char)rd();
+    start[0] &= 0x7F;
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto deadline = t0 + std::chrono::seconds(seconds);
+    uint64_t total = 0;
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::vector<uint64_t> offs;
+        if (!gpu.cudaScanBatch(start, 0, kpl, blocks, tpb, offs)) {
+            std::cout << "CUDA scan failed during benchmark.\n";
+            break;
+        }
+        total += kpl;
+    }
+    const auto t1 = std::chrono::steady_clock::now();
+    gpu.stopKeyGeneration();
+    const double secs = std::chrono::duration<double>(t1 - t0).count();
+    std::cout << "Keys scanned: " << total << "\n"
+              << "Elapsed: " << std::fixed << std::setprecision(2) << secs << " s\n";
+    if (secs > 0.0)
+        std::cout << "Rate: " << std::fixed << std::setprecision(2)
+                  << (double)total / secs / 1e6 << " Mkeys/s\n";
     return 0;
 }
 
@@ -511,10 +534,6 @@ private:
 class Application {
 public:
     Application(int argc, char* argv[]) {
-#ifdef GUI_AVAILABLE
-        argc_ = argc;
-        argv_ = argv;
-#endif
         parseCommandLine(argc, argv);
         initializeLogging();
         initializeComponents();
@@ -522,16 +541,6 @@ public:
 
     int run() {
         Logger::info("BitCrack Distributed v1.0.0 starting...");
-    #ifdef GUI_AVAILABLE
-        Logger::info("GUI support compiled in");
-    #else
-        Logger::info("GUI support NOT compiled in");
-    #endif
-    #ifdef GUI_AVAILABLE
-        if (gui_mode_) {
-            return runGUI();
-        }
-    #endif
         return runConsole();
         }
 
@@ -576,7 +585,10 @@ public:
     }
 
     void initializeLogging() {
-        Logger::initialize(daemon_mode_ ? Logger::Level::Info : Logger::Level::Debug);
+        // INFO by default (console, dashboard log and log file alike); --debug
+        // for DEBUG. Debug used to be the default outside --daemon, and its
+        // per-message output slowed block sync on a slow console.
+        Logger::initialize(debug_logging_ ? Logger::Level::Debug : Logger::Level::Info);
         Logger::info("Logging initialized");
     }
 
@@ -591,6 +603,20 @@ public:
             }
             
             auto config = config_manager_->getConfig();
+            if (config_manager_->lastLoadFailedToParse() && config.network.enable_p2p) {
+                // Defaults would join the network with no node id (a new
+                // alias that peers that know this node reject) and default
+                // settings (every CPU thread). Do not start P2P on them.
+                config.network.enable_p2p = false;
+                const std::string msg =
+                    "P2P NOT STARTED: config file " + config_manager_->getConfigFilePath() +
+                    " is empty or could not be parsed, and there is no usable " +
+                    config_manager_->getConfigFilePath() +
+                    ".bak to restore. Fix the file, or delete it to regenerate defaults (the node id is kept in "
+                    "the data directory's node_id.json), then restart.";
+                Logger::error(msg);
+                std::cerr << "Error: " << msg << "\n";
+            }
             // --network overrides config.json's bitcoin_network for
             // this run (it is not written back to the config file).
             config_network_from_file_ = config.bitcoin_network;
@@ -630,15 +656,20 @@ public:
             if (cpu_only_mode_) {
                 config.gpu.disable_gpu = true;
             }
-            if (gui_mode_ && !force_enable_gpu_) {
-                // Respect explicit config; only emit guidance instead of forcing disable
-                Logger::info("GUI mode detected; honoring GPU config from config.json. Use --cpu-only to disable or --enable-gpu to force probing.");
-            }
+            if (gpu_only_mode_) force_enable_gpu_ = true;  // --gpu-only implies --enable-gpu
             if (cpu_power_override_ > 0) {
                 config.resources.cpu_usage_limit = cpu_power_override_;
             }
             // Persist merged config into the manager so it can be saved later
             config_manager_->setConfig(config);
+            if (gpu_only_mode_) {
+                // --gpu-only turns CUDA on for this run only: set after the
+                // manager's copy, so a later save keeps config.json's
+                // enable_cuda (gpu_only itself is never saved).
+                config.gpu.enable_cuda = true;
+                config.gpu.disable_gpu = false;
+                config.gpu_only = true;
+            }
 
             // Setup file logging if requested
             try {
@@ -682,6 +713,19 @@ public:
                 engine_ = std::make_unique<BitCrackEngine>(config, resource_monitor_.get());
             }
             Logger::info("BitCrack engine initialized");
+
+            if (gpu_only_mode_) {
+                // A GPU-only node without a GPU would join the network and
+                // scan nothing; refuse to start instead.
+                if (!engine_->gpuSearchAvailable()) {
+                    const std::string msg =
+                        "--gpu-only: no CUDA GPU is available (no device found, the driver failed to "
+                        "initialize, or this build has no CUDA support). Run without --gpu-only to use the CPU.";
+                    std::cerr << "Error: " << msg << "\n";
+                    throw UsageError(msg);
+                }
+                Logger::info("GPU-only mode: 0 CPU search threads; the CUDA GPU scans all keys");
+            }
 
             // Initialize network manager
             if (config.network.enable_p2p) {
@@ -773,75 +817,6 @@ public:
         }
     }
 
-#ifdef GUI_AVAILABLE
-    int runGUI() {
-        QApplication app(argc_, argv_);
-        // Ensure the resource monitor runs in GUI mode so the dashboard shows stats
-        if (resource_monitor_) {
-            resource_monitor_->start();
-        }
-
-        // GUI builds still need the network manager threads so coordinators/workers receive work
-        if (network_manager_) {
-            Logger::info("Starting network manager...");
-            network_manager_->start();
-            Logger::info("Network manager started");
-            startStatsAndApi();
-        } else {
-            Logger::info("Network manager not initialized (P2P disabled)");
-            if (standalone_found_) standalone_found_->start();
-            startStatsAndApi();
-            if (engine_ && !engine_->isRunning()) {
-                const auto rng = engine_->getCurrentRange();
-                if (!rng.start.empty() && !engine_->getTargets().empty()) {
-                    Logger::info("Standalone mode: starting the engine");
-                    engine_->start();
-                }
-            }
-        }
-        
-        MainWindow window(config_manager_.get(), engine_.get(), 
-                         network_manager_.get(), resource_monitor_.get());
-        
-        // Register logger callback to feed logs to the GUI (must be after MainWindow creation)
-        Logger::setLogCallback([&window](Logger::Level level, const std::string& msg) {
-            // Only append INFO+ logs to avoid spam
-            if (level >= Logger::Level::Info) {
-                window.appendLogMessage(QString::fromStdString(msg));
-            }
-        });
-        
-        if (!daemon_mode_) {
-            window.show();
-        }
-
-        // SIGINT/SIGTERM only set a flag; poll it from the Qt event loop and
-        // leave exec() so the normal shutdown path below runs.
-        QTimer shutdown_poll;
-        QObject::connect(&shutdown_poll, &QTimer::timeout, &app, [&app]() {
-            if (ShutdownSignal::requested()) {
-                Logger::info("Shutdown requested by signal; closing GUI");
-                app.quit();
-            }
-        });
-        shutdown_poll.start(200);
-
-        Logger::info("GUI event loop starting");
-        int rc = app.exec();
-        shutdown_poll.stop();
-        // A close-time shutdown may still be stopping the components
-        // on the window's thread; it must finish before they are stopped
-        // again or destroyed (engine stop() returns at once while another
-        // stop() is joining).
-        window.waitForShutdown();
-        Logger::setLogCallback(nullptr);
-        shutdownComponents();
-        return rc;
-    }
-    
-    int argc_;
-    char** argv_;
-#endif
 
     int runConsole() {
         Logger::info("Starting in console mode");
@@ -969,7 +944,7 @@ public:
     }
 
     // Single shutdown path for 'quit', console EOF, SIGINT/SIGTERM (all
-    // modes) and GUI close. Idempotent.
+    // modes). Idempotent.
     void shutdownComponents() {
         if (shutdown_done_) return;
         shutdown_done_ = true;
@@ -1224,9 +1199,8 @@ public:
         }
     }
 private:
-    // Minimal CLI parsing (accepts --daemon, --config <file>, --gui)
+    // Minimal CLI parsing (accepts --daemon, --config <file>, --dashboard, ...)
     void parseCommandLine(int argc, char* argv[]) {
-        gui_mode_ = false;
         daemon_mode_ = false;
         autostart_override_set_ = false;
         cpu_only_mode_ = false;
@@ -1241,16 +1215,37 @@ private:
                 config_file_ = argv[++i];
             } else if (arg == "--daemon") {
                 daemon_mode_ = true;
+            } else if (arg == "--debug") {
+                debug_logging_ = true;
             } else if (arg == "--gui") {
-                gui_mode_ = true;
+                // The Qt GUI was removed; its replacement is the web dashboard.
+                std::cerr << "Note: --gui: the Qt GUI was removed. Starting the web dashboard instead (same as "
+                             "--dashboard); open the \"Dashboard: http://...\" address logged below in a browser.\n";
+                dashboard_mode_ = true;
             } else if (arg == "--console") {
-                console_forced_ = true;
+                // Console mode is the only mode; kept so existing scripts still work.
             } else if (arg == "--enable-gpu") {
                 force_enable_gpu_ = true;
             } else if (arg == "--autostart") {
                 // Deprecated; auto-start removed
             } else if (arg == "--cpu") {
                 cpu_only_mode_ = true;
+            } else if (arg == "--gpu-only") {
+                gpu_only_mode_ = true;
+            } else if (arg == "--dashboard") {
+                dashboard_mode_ = true;
+            } else if (arg == "--api-bind") {
+                if (i + 1 >= argc) {
+                    std::cerr << "Error: --api-bind needs host:port (e.g. 127.0.0.1:3339)\n";
+                    std::exit(1);
+                }
+                api_bind_override_ = argv[++i];
+                std::string h;
+                int pt = 0;
+                if (!NodeApi::parseBind(api_bind_override_, h, pt)) {
+                    std::cerr << "Error: --api-bind: '" << api_bind_override_ << "' is not host:port\n";
+                    std::exit(1);
+                }
             } else if (arg == "--power" && i + 1 < argc) {
                 try {
                     cpu_power_override_ = std::stoi(argv[++i]);
@@ -1298,6 +1293,17 @@ private:
                     std::exit(1);
                 }
                 std::exit(deriveAddressMain(argc, argv, argv[++i]));
+            } else if (arg == "--gpu-bench") {
+                int secs = 10;
+                if (i + 1 < argc) {
+                    const std::string nxt = argv[i + 1];
+                    if (!nxt.empty() && nxt.size() <= 4 && nxt.find_first_not_of("0123456789") == std::string::npos) {
+                        const int v = std::stoi(nxt);
+                        if (v > 0 && v <= 3600) { secs = v; ++i; }
+                    }
+                }
+                runGpuBenchmarkMain(secs);
+                std::exit(0);
             } else if (arg == "--bench") {
                 int secs = 10;
                 if (i + 1 < argc) {
@@ -1315,21 +1321,11 @@ private:
             }
         }
 
-        // Fallback: if the binary name contains '-gui' or 'gui' and --gui was not provided,
-        // enable GUI mode. This handles the packaged `bitcrack-distributed-gui.exe` case
-        // where double-clicks or shortcuts may not pass explicit flags.
-        if (!gui_mode_ && !console_forced_ && argc > 0 && argv[0]) {
-            // Match on the executable's file name only, not the whole path
-            // (a directory such as ".../gui/..." must not switch modes).
-            std::string exeName = std::filesystem::path(argv[0]).filename().string();
-            // Normalize to lowercase
-            std::transform(exeName.begin(), exeName.end(), exeName.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-            if (exeName.find("-gui") != std::string::npos || exeName.find("gui") != std::string::npos) {
-                gui_mode_ = true;
-            }
-            Logger::info(std::string("Fallback exe name detection: ") + exeName + ", gui_mode=" + (gui_mode_ ? "true" : "false"));
+        if (gpu_only_mode_ && cpu_only_mode_) {
+            std::cerr << "Error: --gpu-only and --cpu cannot be used together\n";
+            std::exit(1);
         }
-        Logger::info(std::string("parseCommandLine: final gui_mode=") + (gui_mode_ ? "true" : "false") + std::string(", daemon_mode=") + (daemon_mode_ ? "true" : "false"));
+
     }
     
     void printHelp() {
@@ -1338,10 +1334,19 @@ private:
         std::cout << "Options:\n";
         std::cout << "  --config <file>   Load configuration from file (default: config.json)\n";
         std::cout << "  --daemon          Run in daemon mode (no interactive console)\n";
-        std::cout << "  --console         Force console mode (ignore GUI exe-name detection)\n";
+        std::cout << "  --debug           Log at DEBUG level (default: INFO)\n";
         // Auto-start option removed
         std::cout << "  --cpu             Disable GPU acceleration, use CPU only\n";
-        std::cout << "  --enable-gpu      Force enabling GPU probing even in GUI mode\n";
+        std::cout << "  --gpu-only        Search on the CUDA GPU only, with no CPU search threads\n";
+        std::cout << "                    (implies --enable-gpu; exits with an error if no CUDA GPU\n";
+        std::cout << "                    is available; cannot be combined with --cpu)\n";
+        std::cout << "  --enable-gpu      Force enabling GPU probing\n";
+        std::cout << "  --dashboard       Serve the live HTML dashboard and the stats API on this\n";
+        std::cout << "                    machine (http://127.0.0.1:3339/ unless api_bind or\n";
+        std::cout << "                    --api-bind says otherwise); same as api_enabled=true\n";
+        std::cout << "  --api-bind <host:port>\n";
+        std::cout << "                    Address for the dashboard/API (loopback only unless\n";
+        std::cout << "                    config api_allow_remote is true)\n";
         std::cout << "  --power <0-100>   Set CPU usage limit percentage (default: 75)\n";
         std::cout << "  --reward <addr>   Set reward address (overrides config)\n";
         std::cout << "  --network <name>  Bitcoin network: mainnet, testnet, signet or regtest\n";
@@ -1352,26 +1357,29 @@ private:
         std::cout << "  --derive-address <hexkey>\n";
         std::cout << "                    Print the compressed P2PKH address of a private key and exit\n";
         std::cout << "  --bench [seconds] Benchmark the CPU scan kernel (default 10 s) and exit\n";
+        std::cout << "  --gpu-bench [sec] Benchmark the CUDA scan kernel (default 10 s) and exit\n";
         std::cout << "  --help, -h        Show this help message\n";
         std::cout << "  --version, -v     Show version information\n";
-#ifdef GUI_AVAILABLE
-        std::cout << "  --gui             Start with GUI (default: console)\n";
-#endif
+        std::cout << "  --gui             Removed (the Qt GUI is gone); starts the web dashboard\n";
         std::cout << "\nPayouts:\n";
         std::cout << "  The node that finds the key signs the payout with it and broadcasts it.\n";
         std::cout << "  Config enable_mpc (default: false) turns on experimental multi-party\n";
         std::cout << "  payouts; they need the finder's key and are not recommended.\n";
         std::cout << "\nExamples:\n";
         std::cout << "  bitcrack-distributed --config config.json\n";
-        std::cout << "  bitcrack-distributed --daemon --autostart\n";
+        std::cout << "  bitcrack-distributed --daemon\n";
         std::cout << "  bitcrack-distributed --cpu --power 50\n";
+        std::cout << "  bitcrack-distributed --gpu-only --dashboard\n";
         std::cout << "  bitcrack-distributed --reward 1YourBitcoinAddress\n";
     }
 
     // Members
-    bool gui_mode_ = false;
     bool daemon_mode_ = false;
+    bool debug_logging_ = false;
     bool cpu_only_mode_ = false;
+    bool gpu_only_mode_ = false;            // --gpu-only
+    bool dashboard_mode_ = false;           // --dashboard
+    std::string api_bind_override_;         // --api-bind
     int cpu_power_override_ = 0;
     std::string config_file_;
     std::string reward_address_override_;
@@ -1380,7 +1388,6 @@ private:
     bool autostart_override_set_ = false;
     bool autostart_override_ = false;
     bool force_enable_gpu_ = false;
-    bool console_forced_ = false;
     bool shutdown_done_ = false;
     std::atomic<bool> auto_start_stop_{false};
     std::thread auto_start_thread_;
@@ -1400,14 +1407,29 @@ private:
         if (node_stats_) return;
         const Config cfg = config_manager_->getConfig();
         node_stats_ = std::make_unique<NodeStats>(cfg, engine_.get(), network_manager_.get());
+        const bool api_on = cfg.api_enabled || dashboard_mode_;
+        const std::string bind = api_bind_override_.empty() ? cfg.api_bind : api_bind_override_;
+        std::string host;
+        int port = 0;
+        const bool parsed = NodeApi::parseBind(bind, host, port);
+        // The dashboard's log panel only when nobody but this machine can read it.
+        node_stats_->setLogCapture(api_on && parsed && NodeApi::isLoopbackHost(host));
         node_stats_->start();
-        if (cfg.api_enabled) {
-            node_api_ = std::make_unique<NodeApi>(cfg.api_bind, cfg.api_allow_remote, *node_stats_);
+        if (api_on) {
+            node_api_ = std::make_unique<NodeApi>(bind, cfg.api_allow_remote, *node_stats_);
             std::string err;
             if (!node_api_->start(&err)) {
                 Logger::warn("API disabled: " + err);
                 node_api_.reset();
+            } else {
+                const std::string shown =
+                    (host == "localhost" || host == "0.0.0.0" || host == "::1") ? std::string("127.0.0.1") : host;
+                Logger::info("Dashboard: http://" + shown + ":" + std::to_string(node_api_->boundPort()) +
+                             "/  (open it in a web browser on this machine)");
             }
+        } else {
+            Logger::info("Dashboard off: start with --dashboard (or set \"api_enabled\": true in config.json), "
+                         "then open http://127.0.0.1:3339/ in a browser");
         }
     }
     void stopStatsAndApi() {
@@ -1475,14 +1497,12 @@ private:
     void printConfig() {
         auto config = config_manager_->getConfig();
         std::cout << "\n--- Configuration ---\n";
-        // Derive alias from reward address or use network manager's alias
+        // The alias is the network manager's (node id, else node key)
         std::string alias;
         if (network_manager_) {
             alias = network_manager_->getLocalAlias();
-        } else if (!config.reward_address.empty()) {
-            alias = config.reward_address.substr(0, std::min<size_t>(10, config.reward_address.size()));
         } else {
-            alias = "Anonymous";
+            alias = "(P2P not running)";
         }
         std::cout << "Alias: " << alias << "\n";
         std::cout << "CPU Usage: " << config.resources.cpu_usage_limit << "%\n";
@@ -1496,9 +1516,6 @@ private:
 
 int main(int argc, char* argv[]) {
     try {
-#ifdef _WIN32
-        attachParentConsoleIfNeeded(argc, argv);
-#endif
         std::set_terminate([](){
             Logger::error("Unhandled exception reached std::terminate; aborting");
             std::abort();

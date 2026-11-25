@@ -4,6 +4,7 @@
 
 #include "NetworkManager.h"
 #include "WorkState.h"
+#include "PuzzleManager.h"
 #include "EllipticCurve.h"
 
 #include <chrono>
@@ -17,6 +18,9 @@
 // Keep production *ForTest wrappers for existing tests; use this for
 // remaining private APIs (chunk-claim vote / claimed set / scheduler peek).
 struct NetworkManagerTestAccess {
+    static void pushPuzzleSolvedEvent(NetworkManager& nm, const PuzzleSolvedEvent& evt) {
+        nm.pushPuzzleSolvedEvent(evt);
+    }
     static void handleChunkClaimVote(NetworkManager& nm,
                                      const std::string& peer_alias,
                                      const std::string& payload) {
@@ -86,10 +90,23 @@ struct NetworkManagerTestAccess {
     }
     static void setStrikeThreshold(NetworkManager& nm, int n) { nm.peer_strike_disconnect_threshold_ = n; }
     static size_t lastReplayUnlinked(const NetworkManager& nm) { return nm.last_replay_unlinked_; }
+    static size_t lastReplayTrusted(const NetworkManager& nm) { return nm.last_replay_trusted_; }
+    static size_t chainStoreVerifiedRecords(const NetworkManager& nm) {
+        return nm.chain_store_ ? nm.chain_store_->verifiedRecords() : 0;
+    }
+    static KeyspaceBlock buildKeyspaceBlock(NetworkManager& nm, const std::string& start, const std::string& end,
+                                            uint64_t keys, const std::string& miner) {
+        return nm.buildKeyspaceBlock(start, end, keys, miner);
+    }
     static std::vector<std::string> locator(const NetworkManager& nm) { return nm.consensus_engine_.getLocator(); }
     static void handleHeaders(NetworkManager& nm, const std::string& peer_alias,
                               const std::vector<ConsensusEngine::BlockHeader>& headers) {
         nm.handleHeaders(peer_alias, headers);
+    }
+    static void setServeHeaders(NetworkManager& nm, size_t n) { nm.sync_headers_serve_ = n; }
+    static size_t serveHeaders(const NetworkManager& nm) { return nm.sync_headers_serve_; }
+    static std::vector<std::string> getDataReplyBatches(const NetworkManager& nm, const std::vector<std::string>& hashes) {
+        return nm.getDataReplyBatches(hashes);
     }
     static size_t chainStoreSize(const NetworkManager& nm) {
         return nm.chain_store_ ? nm.chain_store_->size() : 0;
@@ -332,6 +349,12 @@ struct NetworkManagerTestAccess {
         NetworkManager& nm, std::function<void(const std::string&, const std::string&, const std::string&)> f) {
         nm.chunk_complete_observer_for_test_ = std::move(f);
     }
+    static void setPeerRewardAddress(NetworkManager& nm, const std::string& alias, const std::string& addr) {
+        nm.reward_system_.setPeerRewardAddress(alias, addr);
+    }
+    static void recordRewardKeys(NetworkManager& nm, const std::string& alias, uint64_t keys, uint64_t chunks) {
+        nm.reward_system_.recordKeys(alias, keys, chunks);
+    }
     static std::string peerRewardAddress(const NetworkManager& nm, const std::string& alias) {
         return nm.reward_system_.getPeerRewardAddress(alias);
     }
@@ -468,6 +491,8 @@ struct NetworkManagerTestAccess {
         for (const auto& a : evicted) nm.releaseLostPeer(a);
         return evicted;
     }
+    // Claim accounting (2026-11-22): the single-flight claim guard.
+    static void setClaimAttemptInFlight(NetworkManager& nm, bool v) { nm.claim_attempt_in_flight_.store(v); }
     static size_t orphanedCount(const NetworkManager& nm) { return nm.work_coordinator_.orphanedRangeCount(); }
     static bool isRangeRetired(const NetworkManager& nm, const std::string& s, const std::string& e) {
         return nm.work_coordinator_.isRangeRetired(s, e);
@@ -501,10 +526,60 @@ struct NetworkManagerTestAccess {
         return nm.puzzle_manager_->isPuzzleSolved(puzzle);
     }
     static std::vector<PayoutOutput> proportionalPayouts(NetworkManager& nm, uint64_t balance,
-                                                         const std::string& finder, double finder_pct) {
-        return nm.computeProportionalPayouts(balance, finder, finder_pct);
+                                                         const std::string& finder, double finder_pct,
+                                                         const std::string& finder_peer = std::string()) {
+        return nm.computeProportionalPayouts(balance, finder, finder_pct, finder_peer);
     }
     static RewardSystem& rewardSystem(NetworkManager& nm) { return nm.reward_system_; }
+    // A self-minted block (as a completing node mints it) for `peer`'s range.
+    static bool mintBlock(NetworkManager& nm, const std::string& start, const std::string& end, uint64_t keys,
+                          const std::string& peer) {
+        const KeyspaceBlock b = nm.buildKeyspaceBlock(start, end, keys, peer);
+        return nm.ingestKeyspaceBlock(nm.getLocalAlias(), b, /*penalize_peer=*/false);
+    }
+    static std::vector<PayoutOutput> payoutsFromPool(NetworkManager& nm, uint64_t balance, const std::string& finder,
+                                                     double pct, const std::vector<RewardSystem::PeerContribution>& pool,
+                                                     uint64_t total, const std::string& finder_peer) {
+        return nm.computeProportionalPayouts(balance, finder, pct, &pool, total, finder_peer);
+    }
+    static void payoutPoolFor(const NetworkManager& nm, const PuzzleInfo& p,
+                              std::vector<RewardSystem::PeerContribution>& pool, uint64_t& total) {
+        nm.payoutPoolFor(p, pool, total);
+    }
+    static bool applyPeerPayout(NetworkManager& nm, const std::vector<PayoutOutput>& outputs, const std::string& from,
+                                uint32_t puzzle) {
+        return nm.applyPayoutNotice(outputs, from, /*local=*/false, puzzle);
+    }
+    // Consensus v4 (ConsensusRules.h).
+    static bool mintBlockWithAttestations(NetworkManager& nm, const std::string& start, const std::string& end,
+                                          uint64_t keys, const std::string& miner,
+                                          const std::vector<CommitAttestation>& atts) {
+        KeyspaceBlock b = nm.buildKeyspaceBlock(start, end, keys, miner);
+        b.commitments.front().attestations = atts;
+        return nm.ingestKeyspaceBlock(nm.getLocalAlias(), b, /*penalize_peer=*/false);
+    }
+    static uint64_t v4ActivationHeight(const NetworkManager& nm) { return nm.consensus_engine_.v4ActivationHeight(); }
+    static bool v4ActiveForNextBlock(const NetworkManager& nm) { return nm.v4ActiveForNextBlock(); }
+    static void queueOwnCommitment(NetworkManager& nm, const std::string& s, const std::string& e, uint64_t k) {
+        nm.queueOwnCommitment(s, e, k);
+    }
+    static size_t pendingOwnCommitments(const NetworkManager& nm) { return nm.pendingOwnCommitments(); }
+    static void handleCommitAttestation(NetworkManager& nm, const std::string& from, const std::string& payload) {
+        nm.handleCommitAttestation(from, payload, 0);
+    }
+    static void attestCompletion(NetworkManager& nm, const std::string& s, const std::string& e, uint64_t k,
+                                 const std::string& miner) {
+        nm.attestCompletion(s, e, k, miner);
+    }
+    static uint64_t attestationsSent(const NetworkManager& nm) { return nm.attestations_sent_.load(); }
+    static void expireOwnCommitments(NetworkManager& nm) { nm.expireOwnCommitments(); }
+    static uint64_t chainSplitClaimCap(const NetworkManager& nm) { return nm.chainSplitClaimCap(); }
+    static void setLastSolver(NetworkManager& nm, const std::string& alias, const std::string& addr, uint32_t puzzle) {
+        std::lock_guard<std::mutex> lk(nm.state_mutex_);
+        nm.last_solver_alias_ = alias;
+        nm.last_solver_address_ = addr;
+        nm.last_solver_puzzle_ = puzzle;
+    }
     static bool holdsMpcSigningKey(NetworkManager& nm) {
         std::lock_guard<std::mutex> lk(nm.mpc_mutex_);
         return !nm.mpc_signing_key_.empty();

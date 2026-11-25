@@ -605,6 +605,93 @@ TEST_CASE("PR46 regtest: a default-config find (MPC off) is paid out directly to
     Logger::initialize(Logger::Level::Info);
 }
 
+TEST_CASE("Payout split regtest: the finder gets 90%, the other searchers split 10% by keys; dust and rounding go to the finder", "[.regtest][payout_split]") {
+    REGTEST_OR_SKIP(rt);
+    Logger::initialize(Logger::Level::Error);
+    PuzzleKey k = makeKey(*rt, 0x5a17c0deULL);
+    const std::string puzzle_addr = k.p2wpkh;
+    const std::string finder_addr = makeKey(*rt, 0x5a17c0deULL + 1).p2wpkh;
+    const std::string addr_a = makeKey(*rt, 0x5a17c0deULL + 2).p2wpkh;
+    const std::string addr_b = makeKey(*rt, 0x5a17c0deULL + 3).p2wpkh;
+    const std::string addr_c = makeKey(*rt, 0x5a17c0deULL + 4).p2wpkh;  // dust share
+    std::set<std::string> funding = {rt->fund(puzzle_addr, 100000000)};  // one input
+    rt->mine(1);
+    auto w = rt->wallet();
+    REQUIRE(w->getAddressBalance(puzzle_addr) == 100000000);
+
+    std::random_device rd;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / ("bitcrack_split_regtest_" + std::to_string(rd()));
+    std::filesystem::create_directories(dir);
+    Config cfg;  // defaults: MPC off, finder_reward_pct 0.90
+    REQUIRE_FALSE(cfg.enable_mpc);
+    REQUIRE(cfg.finder_reward_pct == 0.90);
+    cfg.data_directory = dir.string();
+    cfg.network.bootstrap_nodes.clear();
+    cfg.network.enable_upnp = false;
+    cfg.electrum_servers.clear();
+    cfg.bitcoin_backend = "electrum";  // no servers: balance, UTXOs and broadcast use the RPC fallback
+    cfg.bitcoin_network = "regtest";
+    cfg.bitcoin_rpc_url = rt->url();
+    cfg.bitcoin_rpc_user = rt->user();
+    cfg.bitcoin_rpc_password = rt->pass();
+    cfg.reward_address = finder_addr;
+    auto nm = std::make_unique<NetworkManager>(cfg, nullptr);
+    NetworkManagerTestAccess::setPuzzleTarget(*nm, puzzle_addr);
+    const uint32_t puzzle = static_cast<uint32_t>(NetworkManagerTestAccess::puzzleNumberForWork(*nm));
+    auto& rs = NetworkManagerTestAccess::rewardSystem(*nm);
+    const std::string me = nm->getLocalAlias();
+    rs.setContribution(me, 2000000000ull, 200, finder_addr);           // the finder: no pool share
+    rs.setContribution("~finder-2nd", 1000000000ull, 100, finder_addr);  // same owner: no pool share
+    rs.setContribution("~a", 3000000000ull, 300, addr_a);
+    rs.setContribution("~b", 1000000000ull, 100, addr_b);
+    rs.setContribution("~c", 40000ull, 1, addr_c);                     // 79 sats: dust
+    rs.setContribution("~noaddr", 1000000000ull, 100, "");             // cannot be paid
+
+    std::atomic<bool> done{false};
+    std::thread miner([&] {
+        while (!done) {
+            try { rt->mine(1); } catch (...) {}
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        }
+    });
+    NetworkManagerTestAccess::onKeyFound(*nm, k.priv, me, finder_addr);
+    done = true;
+    miner.join();
+    CHECK(NetworkManagerTestAccess::isPuzzleSolved(*nm, puzzle));
+    std::ifstream rec(secret_file::foundKeyLogPath(dir.string(), puzzle));
+    std::stringstream rsx;
+    rsx << rec.rdbuf();
+    CHECK(rsx.str().find("status=payout_confirmed") != std::string::npos);
+    nm.reset();
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+
+    // Pre-fee split (keys of everyone but the finder: 5,000,040,000):
+    //   a 10M x 3e9/5.00004e9 = 5,999,952; b 1,999,984; c 79 (dust);
+    //   noaddr 1,999,984 (unpayable) -> finder; finder 90,000,000 + rest.
+    // The wallet drops c (below the 294-sat P2WPKH dust limit) into the
+    // largest output (the finder's) and takes the sweep fee (1 P2WPKH input,
+    // 3 outputs: 209 vB x 50 sat/vB = 10,450 sats) from the outputs pro rata.
+    auto paid_to = [&](const std::string& addr) -> int64_t {
+        const json got = rt->rpc("scantxoutset", json::array({"start", json::array({"addr(" + addr + ")"})}));
+        if (got["unspents"].empty()) return -1;
+        REQUIRE(got["unspents"].size() == 1);
+        return std::llround(got["unspents"][0]["amount"].get<double>() * 1e8);
+    };
+    CHECK(paid_to(addr_a) == 5999326);
+    CHECK(paid_to(addr_b) == 1999776);
+    CHECK(paid_to(finder_addr) == 91990448);
+    CHECK(paid_to(addr_c) == -1);  // dust: no output
+    CHECK(5999326 + 1999776 + 91990448 + 10450 == 100000000);
+    CHECK(w->getAddressBalance(puzzle_addr) == 0);
+    const json got = rt->rpc("scantxoutset", json::array({"start", json::array({"addr(" + finder_addr + ")"})}));
+    const json& u = got["unspents"][0];
+    const std::string block = rt->rpc("getblockhash", {u["height"]}).get<std::string>();
+    const json tx = rt->rpc("getrawtransaction", {u["txid"], true, block});
+    checkSweep(*rt, tx, funding, 100000000, 3);  // one output per payee, the finder's address once
+    Logger::initialize(Logger::Level::Info);
+}
+
 #if !defined(_WIN32) && !defined(WINDOWS)
 namespace {
 // A loopback TCP forwarder to the node's RPC port that can be "down"

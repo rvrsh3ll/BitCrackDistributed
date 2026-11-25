@@ -174,6 +174,19 @@ TEST_CASE("API request-line parsing", "[api]") {
     REQUIRE(p == "/status");
     REQUIRE(NodeApi::parseRequestHead("GET /status?x=1 HTTP/1.0", m, p) == 0);
     REQUIRE(p == "/status");
+    std::string q;
+    REQUIRE(NodeApi::parseRequestHead("GET /keyspace?buckets=8&x#frag HTTP/1.1", m, p, &q) == 0);
+    REQUIRE(p == "/keyspace");
+    REQUIRE(q == "buckets=8&x");
+    REQUIRE(NodeApi::parseRequestHead("GET /status#a?b HTTP/1.1", m, p, &q) == 0);
+    REQUIRE(p == "/status");
+    REQUIRE(q.empty());
+    std::map<std::string, std::string> qm;
+    REQUIRE(NodeApi::parseQuery("a=1&b&&c=", qm));
+    REQUIRE(qm.size() == 3);
+    REQUIRE(qm["a"] == "1");
+    REQUIRE(qm["b"].empty());
+    REQUIRE_FALSE(NodeApi::parseQuery("=1", qm));
     REQUIRE(NodeApi::parseRequestHead("GET /status", m, p) == 400);
     REQUIRE(NodeApi::parseRequestHead("GET  /status HTTP/1.1", m, p) == 400);
     REQUIRE(NodeApi::parseRequestHead("get /status HTTP/1.1", m, p) == 400);
@@ -283,7 +296,7 @@ TEST_CASE("API answers bad requests with errors and survives hostile clients", "
     REQUIRE(statusOf(get(port, "/status")) == 200);
     REQUIRE(statusOf(get(port, "/status/")) == 200);
     REQUIRE(statusOf(get(port, "/status?pretty=1")) == 200);
-    REQUIRE(statusOf(get(port, "/")) == 404);
+    REQUIRE(statusOf(get(port, "/")) == 200);  // the dashboard page
     REQUIRE(statusOf(get(port, "/nope")) == 404);
     REQUIRE(statusOf(get(port, "/../etc/passwd")) == 404);
     REQUIRE(statusOf(get(port, "/statusX")) == 404);

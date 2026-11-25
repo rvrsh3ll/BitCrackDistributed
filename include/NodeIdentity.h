@@ -6,6 +6,10 @@
 //   <data_directory>/node_key.json     secp256k1 key, created 0600, loaded
 //                                      at startup. The private key is never
 //                                      logged (only a public key prefix).
+//   <data_directory>/node_id.json      the node id (config.json's
+//                                      network.uuid), kept next to the key
+//                                      so an empty or lost config.json does
+//                                      not rename the node.
 //   <data_directory>/known_peers.json  trust-on-first-use pins: an alias
 //                                      keeps the first pubkey it
 //                                      authenticated with; a later
@@ -45,6 +49,23 @@ LoadStatus loadOrCreateNodeKey(const std::string& data_dir, KeyPair& out, std::s
 // POSIX). exclusive=true fails if `path` already exists.
 bool writeOwnerOnlyFile(const std::string& path, const std::string& content, bool exclusive);
 std::string uniqueSuffix();
+
+// --- Node id (network.uuid) persisted in the data directory -------------
+std::string nodeIdPath(const std::string& data_dir);
+// True for a plausible node id: 1-64 chars of [0-9A-Za-z-].
+bool isValidNodeId(const std::string& id);
+// The id saved in <data_dir>/node_id.json; "" if none or unusable.
+std::string loadNodeId(const std::string& data_dir);
+// Writes <data_dir>/node_id.json (0600). False on an invalid id, an empty
+// data_dir or a write failure.
+bool saveNodeId(const std::string& data_dir, const std::string& id);
+// The node id to use: config.json's uuid when set (saved to node_id.json
+// if that differs), otherwise the saved one, otherwise "". `note` says
+// which, without secrets.
+std::string resolveNodeId(const std::string& data_dir, const std::string& config_uuid, std::string* note = nullptr);
+// Alias for a node with no id: the first 12 hex chars of
+// SHA-256(compressed pubkey bytes). "" for a malformed pubkey.
+std::string aliasFromPubkey(const std::string& pubkey_hex);
 
 // Lowercase hex; "" if `hex` is not a 33-byte compressed or 65-byte
 // uncompressed secp256k1 point encoding.

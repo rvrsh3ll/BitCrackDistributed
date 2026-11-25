@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/Microsoft/vcpkg/master/scripts/vcpkg.schema.json",
   "name": "bitcrack-distributed",
   "version-string": "1.0.0",
-  "builtin-baseline": "7476f0d4e77d3333fbb249657df8251c28c4faae",
+  "builtin-baseline": "22375ff854079e54bef8a72c25382c18ca126e36",
   "dependencies": [
     "openssl"
   ]

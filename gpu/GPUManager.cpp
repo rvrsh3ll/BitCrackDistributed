@@ -244,15 +244,18 @@ void GPUManager::startKeyGeneration() {
 #endif
 
     running_.store(true);
-    keys_generated_.store(0);
+    // keys_generated_ is cumulative like the engine's CPU counter; the engine
+    // restarts on every new chunk, and resetting here made the GPU part of
+    // total_keys_checked drop back to zero each time.
 
 #ifdef CUDA_AVAILABLE
     if (config_.gpu.enable_cuda) {
+        // The CUDA search is driven by BitCrackEngine::gpuSearchWorker (which
+        // pulls batches from the shared range and host-verifies finds), not by
+        // a GPUManager-owned worker. Here we only confirm the kernel is ready.
         cuda_threads_.clear();
-        // The current CUDAKernel implementation is single-device; only start one worker.
         if (selected_cuda_ordinal >= 0 && cuda_kernel_ && cuda_kernel_->isReady()) {
-            try { cuda_threads_.emplace_back(&GPUManager::cudaKeyGenerationLoop, this, selected_cuda_ordinal); }
-            catch (...) { Logger::error(std::string("Failed to launch CUDA worker for device ") + std::to_string(selected_cuda_ordinal)); }
+            Logger::info("CUDA search kernel ready; engine will drive GPU batches");
         }
     }
 #endif
@@ -408,6 +411,61 @@ void GPUManager::setBinaryTargets(const std::vector<std::array<unsigned char,20>
 #endif
 }
 
+namespace {
+std::mutex g_test_backend_mutex;
+GPUManager::ScanBackendForTest g_test_backend;
+uint64_t g_test_backend_kpl = 0;
+GPUManager::ScanBackendForTest testBackend(uint64_t* kpl = nullptr) {
+    std::lock_guard<std::mutex> lk(g_test_backend_mutex);
+    if (kpl) *kpl = g_test_backend_kpl;
+    return g_test_backend;
+}
+}  // namespace
+
+void GPUManager::setScanBackendForTest(ScanBackendForTest fn, uint64_t keys_per_launch) {
+    std::lock_guard<std::mutex> lk(g_test_backend_mutex);
+    g_test_backend = std::move(fn);
+    g_test_backend_kpl = keys_per_launch;
+}
+
+size_t GPUManager::sizeofSelfForTest() { return sizeof(GPUManager); }
+size_t GPUManager::sizeofCudaKernelForTest() { return sizeof(CUDAKernel); }
+
+bool GPUManager::cudaReady() const {
+    if (testBackend()) return true;
+#ifdef CUDA_AVAILABLE
+    return cuda_kernel_ && cuda_kernel_->isReady();
+#else
+    return false;
+#endif
+}
+
+bool GPUManager::cudaScanBatch(const unsigned char start_be[32], uint64_t base_offset, uint64_t count,
+                               int blocks, int threads_per_block, std::vector<uint64_t>& out_offsets) {
+    if (auto fn = testBackend()) return fn(start_be, base_offset, count, out_offsets);
+#ifdef CUDA_AVAILABLE
+    if (!cuda_kernel_ || !cuda_kernel_->isReady()) return false;
+    return cuda_kernel_->scanBatch(start_be, base_offset, count, blocks, threads_per_block, out_offsets);
+#else
+    (void)start_be; (void)base_offset; (void)count; (void)blocks; (void)threads_per_block; (void)out_offsets;
+    return false;
+#endif
+}
+
+void GPUManager::cudaRecommendedLaunch(int& blocks, int& threads_per_block, uint64_t& keys_per_launch) const {
+    uint64_t test_kpl = 0;
+    if (testBackend(&test_kpl) && test_kpl > 0) {
+        blocks = 1; threads_per_block = 1; keys_per_launch = test_kpl;
+        return;
+    }
+#ifdef CUDA_AVAILABLE
+    if (cuda_kernel_) { cuda_kernel_->recommendedLaunch(blocks, threads_per_block, keys_per_launch); return; }
+#endif
+    blocks = 4096; threads_per_block = 256; keys_per_launch = (uint64_t)blocks * threads_per_block * 256ull;
+}
+
+void GPUManager::addKeysGenerated(uint64_t n) { keys_generated_.fetch_add(n, std::memory_order_relaxed); }
+
 #ifdef CUDA_AVAILABLE
 void GPUManager::initializeCUDA() {
     for (int device_id : active_device_ids_) {
@@ -425,28 +483,10 @@ void GPUManager::shutdownCUDA() {
     cuda_threads_.clear();
 }
 
-void GPUManager::cudaKeyGenerationLoop(int device_id) {
-    Logger::info(std::string("CUDA worker starting on device ") + std::to_string(device_id));
-    // Use SEH-safe runtime init; if this fails, exit the worker.
-#ifdef CUDA_AVAILABLE
-    const int init_rc = safe_cuda_runtime_init(device_id);
-    if (init_rc != 0) {
-        Logger::error(std::string("CUDA worker runtime init failed for device ") + std::to_string(device_id) + ", code: " + std::to_string(init_rc));
-        return;
-    }
-#endif
-    while (running_.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        uint64_t produced = 0;
-        if (config_.gpu.enable_cuda && cuda_kernel_ && cuda_kernel_->isReady()) {
-            produced = cuda_kernel_->launchOnce();
-        }
-        if (produced == 0) {
-            produced = 1000;
-        }
-        keys_generated_.fetch_add(produced);
-    }
-    Logger::info(std::string("CUDA worker stopped on device ") + std::to_string(device_id));
+void GPUManager::cudaKeyGenerationLoop(int /*device_id*/) {
+    // Retained for ABI/compat; the real CUDA search is driven by
+    // BitCrackEngine::gpuSearchWorker via cudaScanBatch(), not by a
+    // GPUManager-owned worker thread. This loop is no longer started.
 }
 #endif
 

@@ -29,28 +29,111 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>)
 
+# CUDA architectures; see the "CUDA target architectures" block below. Declared
+# here because it must feed CMAKE_CUDA_ARCHITECTURES before enable_language(CUDA).
+set(BITCRACK_CUDA_ARCH "75;86;89;120" CACHE STRING
+    "CUDA architectures to build (CMake CUDA_ARCHITECTURES syntax, or 'native')")
+
 # Enable CUDA if available
+#
+# check_language(CUDA) only finds nvcc when it is on PATH (or CUDACXX /
+# CMAKE_CUDA_COMPILER is set). Distro installs such as Fedora/Nobara put the
+# toolkit in /usr/local/cuda without adding its bin/ to PATH, so we also look
+# for nvcc next to a CUDAToolkit found by find_package and in the usual install
+# prefixes. CUDA_AVAILABLE is only ever turned ON together with
+# enable_language(CUDA): without the CUDA language the .cu kernels would be
+# silently dropped from GPUKernels and the final link would fail with
+# undefined bcd_cuda_* references.
 include(CheckLanguage)
 if(NOT DISABLE_CUDA)
     check_language(CUDA)
+    if(NOT CMAKE_CUDA_COMPILER)
+        find_package(CUDAToolkit QUIET)
+        set(_bitcrack_nvcc_candidates)
+        if(CUDAToolkit_NVCC_EXECUTABLE)
+            list(APPEND _bitcrack_nvcc_candidates "${CUDAToolkit_NVCC_EXECUTABLE}")
+        endif()
+        if(CUDAToolkit_BIN_DIR)
+            list(APPEND _bitcrack_nvcc_candidates "${CUDAToolkit_BIN_DIR}/nvcc")
+        endif()
+        foreach(_env CUDA_PATH CUDA_HOME CUDA_ROOT CUDAToolkit_ROOT)
+            if(DEFINED ENV{${_env}})
+                list(APPEND _bitcrack_nvcc_candidates "$ENV{${_env}}/bin/nvcc")
+            endif()
+        endforeach()
+        list(APPEND _bitcrack_nvcc_candidates /usr/local/cuda/bin/nvcc /opt/cuda/bin/nvcc)
+        file(GLOB _bitcrack_versioned_nvcc /usr/local/cuda-*/bin/nvcc)
+        if(_bitcrack_versioned_nvcc)
+            list(SORT _bitcrack_versioned_nvcc COMPARE NATURAL ORDER DESCENDING)
+            list(APPEND _bitcrack_nvcc_candidates ${_bitcrack_versioned_nvcc})
+        endif()
+        list(APPEND _bitcrack_nvcc_candidates /usr/bin/nvcc)
+        set(_bitcrack_nvcc "")
+        foreach(_cand IN LISTS _bitcrack_nvcc_candidates)
+            if(EXISTS "${_cand}" AND NOT IS_DIRECTORY "${_cand}")
+                set(_bitcrack_nvcc "${_cand}")
+                break()
+            endif()
+        endforeach()
+        if(_bitcrack_nvcc)
+            message(STATUS "nvcc not on PATH; using ${_bitcrack_nvcc}")
+            set(CMAKE_CUDA_COMPILER "${_bitcrack_nvcc}" CACHE FILEPATH "CUDA compiler" FORCE)
+        elseif(CUDAToolkit_FOUND)
+            message(FATAL_ERROR
+                "CUDA toolkit found (${CUDAToolkit_LIBRARY_DIR}) but nvcc not found. "
+                "Add the toolkit's bin directory to PATH (e.g. export PATH=/usr/local/cuda/bin:$PATH), "
+                "or pass -DCMAKE_CUDA_COMPILER=/path/to/nvcc, or configure a CPU-only build with "
+                "-DDISABLE_CUDA=ON.")
+        endif()
+    endif()
     if(CMAKE_CUDA_COMPILER)
+        # Every target that device-links GPUKernels (bitcrack-distributed,
+        # bitcrack_tests) must use the same architectures as the
+        # kernels themselves. Left to CMake's default (sm_75) the consumer's
+        # device link drops the sm_120-only kernel objects: bitcrack_tests then
+        # fails to link (undefined __cudaRegisterLinkedBinary_*) and the
+        # executables carry no kernel image for the GPU.
+        set(CMAKE_CUDA_ARCHITECTURES "${BITCRACK_CUDA_ARCH}")
         enable_language(CUDA)
         set(CUDA_AVAILABLE ON)
-        message(STATUS "CUDA found - GPU acceleration enabled")
+        message(STATUS "CUDA found (${CMAKE_CUDA_COMPILER}) - GPU acceleration enabled")
     else()
-        # Try find_package as fallback
-        find_package(CUDAToolkit QUIET)
-        if(CUDAToolkit_FOUND)
-            set(CUDA_AVAILABLE ON)
-            message(STATUS "CUDA found via find_package - GPU acceleration enabled")
-        else()
-            set(CUDA_AVAILABLE OFF)
-            message(STATUS "CUDA not found - CPU only mode")
-        endif()
+        set(CUDA_AVAILABLE OFF)
+        message(STATUS "CUDA not found - CPU only mode")
     endif()
 else()
     set(CUDA_AVAILABLE OFF)
     message(STATUS "CUDA explicitly disabled via DISABLE_CUDA option")
+endif()
+
+# ---------------------------------------------------------------------------
+# CUDA target architectures (real search kernels, WP1+).
+#
+# Default to a portable PTX+SASS spread that includes the user's RTX 5070
+# (Blackwell, compute capability 12.0 / sm_120). Pass -DBITCRACK_CUDA_ARCH=native
+# to build only for the build host's GPU, or an explicit list such as "89;120".
+# Building any sm_120 target needs CUDA 12.8+ (older nvcc has no Blackwell
+# support); we fail configure with a clear message rather than a cryptic nvcc
+# error. DISABLE_CUDA / CPU-only builds never reach this block.
+# ---------------------------------------------------------------------------
+# (BITCRACK_CUDA_ARCH itself is declared above, before enable_language(CUDA).)
+
+if(CUDA_AVAILABLE)
+    find_package(CUDAToolkit REQUIRED)
+    set(_bitcrack_needs_128 OFF)
+    foreach(_a IN LISTS BITCRACK_CUDA_ARCH)
+        string(REGEX MATCH "^([0-9]+)" _anum "${_a}")
+        if(_anum AND _anum GREATER_EQUAL 120)
+            set(_bitcrack_needs_128 ON)
+        endif()
+    endforeach()
+    if(_bitcrack_needs_128 AND CUDAToolkit_VERSION VERSION_LESS "12.8")
+        message(FATAL_ERROR
+            "BITCRACK_CUDA_ARCH requests sm_120 (Blackwell, e.g. RTX 5070) but the "
+            "detected CUDA toolkit is ${CUDAToolkit_VERSION}. Install CUDA 12.8 or "
+            "newer, or set -DBITCRACK_CUDA_ARCH to a list without 120 (e.g. \"75;86;89\").")
+    endif()
+    message(STATUS "CUDA toolkit ${CUDAToolkit_VERSION}; building for architectures: ${BITCRACK_CUDA_ARCH}")
 endif()
 
 # Find required packages
@@ -108,37 +191,13 @@ else()
     message(STATUS "OpenCL not found")
 endif()
 
-# Find GUI framework (Qt or equivalent)
-option(BITCRACK_ENABLE_GUI "Build the Qt-based Electrum GUI" ON)
+# The Qt GUI was removed; the node serves an HTML dashboard instead
+# (--dashboard, see README "Web dashboard"). Nothing here needs Qt.
+if(DEFINED BITCRACK_ENABLE_GUI AND BITCRACK_ENABLE_GUI)
+    message(WARNING "BITCRACK_ENABLE_GUI is ignored: the Qt GUI was removed. Run the node with --dashboard "
+                    "and open http://127.0.0.1:3339/ in a browser instead.")
+endif()
 option(BITCRACK_COPY_BUILD_TO_DIST "Copy built binaries to dist directory during build" ON)
-
-set(_bitcrack_qt_components Core Widgets Network)
-
-if(BITCRACK_ENABLE_GUI)
-    # Prefer Qt6 but fall back to Qt5 if needed. Users who want GUI builds should install Qt
-    # (MSVC x64) locally or bundle redistributables via windeployqt.
-    find_package(Qt6 QUIET COMPONENTS ${_bitcrack_qt_components})
-else()
-    set(Qt6_FOUND OFF)
-endif()
-if(Qt6_FOUND)
-    set(GUI_AVAILABLE ON)
-    set(BITCRACK_QT_VERSION 6)
-    message(STATUS "Qt6 found - GUI enabled")
-elseif(BITCRACK_ENABLE_GUI)
-    find_package(Qt5 QUIET COMPONENTS ${_bitcrack_qt_components})
-    if(Qt5_FOUND)
-        set(GUI_AVAILABLE ON)
-        set(BITCRACK_QT_VERSION 5)
-        message(STATUS "Qt5 found - GUI enabled")
-    else()
-        set(GUI_AVAILABLE OFF)
-        message(WARNING "BITCRACK_ENABLE_GUI is ON but Qt was not found - building console mode only")
-    endif()
-else()
-    set(GUI_AVAILABLE OFF)
-    message(STATUS "GUI disabled via BITCRACK_ENABLE_GUI=OFF")
-endif()
 
 # Add nlohmann/json for configuration
 include(FetchContent)
@@ -180,10 +239,6 @@ if(BITCRACK_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
-if(GUI_AVAILABLE)
-    add_subdirectory(gui)
-endif()
-
 # Compiler-specific options
 if(MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4")
@@ -214,11 +269,6 @@ endif()
 add_executable(bitcrack-distributed
     src/main.cpp
 )
-
-# On Windows with GUI, use WIN32 subsystem to hide console window
-if(WIN32 AND GUI_AVAILABLE)
-    set_target_properties(bitcrack-distributed PROPERTIES WIN32_EXECUTABLE TRUE)
-endif()
 
 # A tiny CUDA probe helper. This runs CUDA Driver API initialization in a separate process
 # so that a catastrophic driver failure cannot kill the main application.
@@ -263,15 +313,6 @@ if(OPENCL_AVAILABLE)
     target_link_libraries(bitcrack-distributed PRIVATE ${OpenCL_LIBRARIES})
 endif()
 
-if(GUI_AVAILABLE)
-    target_link_libraries(bitcrack-distributed PRIVATE BitCrackGUI)
-    # Compile the main binary with GUI_AVAILABLE so GUI code paths are enabled
-    target_compile_definitions(bitcrack-distributed PRIVATE GUI_AVAILABLE)
-    # Allow the main binary to include and link Qt symbols
-    set(_qt_prefix Qt${BITCRACK_QT_VERSION})
-    target_link_libraries(bitcrack-distributed PRIVATE ${_qt_prefix}::Core ${_qt_prefix}::Widgets ${_qt_prefix}::Network)
-endif()
-
 if(WIN32)
     target_link_libraries(bitcrack-distributed PRIVATE ws2_32 iphlpapi)
 elseif(APPLE)
@@ -307,25 +348,19 @@ if(MSVC)
     endforeach()
 endif()
 
-## Copy build outputs to dist tree for easy GUI testing/packaging
+## Copy build outputs to the dist tree for packaging
 if(BITCRACK_COPY_BUILD_TO_DIST AND WIN32)
     set(DIST_ROOT "${CMAKE_SOURCE_DIR}/dist/windows")
-    set(DIST_GUI_DIR "${DIST_ROOT}/gui")
     set(DIST_CLI_DIR "${DIST_ROOT}/cli")
 
     add_custom_command(TARGET bitcrack-distributed POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_GUI_DIR}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_CLI_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:bitcrack-distributed> "${DIST_CLI_DIR}/bitcrack-distributed-cli.exe"
-        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:bitcrack-distributed> "${DIST_GUI_DIR}/bitcrack-distributed-gui.exe"
         COMMENT "Copy bitcrack-distributed binary to ${DIST_ROOT}"
     )
 
     # Attempt to copy PDBs if present
     # add_custom_command(TARGET bitcrack-distributed POST_BUILD
     #     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_PDB_FILE:bitcrack-distributed> "${DIST_CLI_DIR}/bitcrack-distributed-cli.pdb"
-    #     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_PDB_FILE:bitcrack-distributed> "${DIST_GUI_DIR}/bitcrack-distributed-gui.pdb"
     # )
-
-    # BitCrackGUI post-build copy is handled in gui/CMakeLists.txt
 endif()

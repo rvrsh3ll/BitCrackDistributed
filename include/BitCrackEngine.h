@@ -109,6 +109,25 @@ public:
     // Keys of the current range actually scanned (counted when a batch, or the
     // scanned prefix of a stopped batch, finishes).
     uint64_t scannedKeysInCurrentRange() const;
+    // True once a GPU search worker has run in this process (the node then
+    // sizes its chunks for the GPU; see ChunkSizing.h).
+    bool gpuSearchUsed() const { return gpu_search_used_.load(std::memory_order_acquire); }
+    // CPU search workers start() launches for `config`: 0 with gpu_only,
+    // else cpu_thread_count, or the hardware thread count when that is 0
+    // (at least 1).
+    static uint32_t cpuWorkerCount(const Config& config);
+    // CPU search workers this engine starts (cpuWorkerCount of its config).
+    uint32_t cpuWorkers() const { return cpuWorkerCount(config_); }
+    bool gpuOnly() const { return config_.gpu_only; }
+    // GPU devices found when the engine was built (empty without a GPU
+    // manager). Read-only after construction, so safe from any thread.
+    std::vector<GPUDevice> gpuDevices() const;
+    // Whether a CUDA search worker can run: briefly brings the GPU manager
+    // up and back down (start() does the same for every run). False without
+    // a GPU manager, a CUDA build or a device. Call while the engine is
+    // stopped (main.cpp checks it for --gpu-only before any work arrives);
+    // while running it reports the current state.
+    bool gpuSearchAvailable();
     // True when [start, end] is the current range and all of it was scanned:
     // nothing left to hand out, nothing queued for retry, no batch in flight,
     // and the scanned count equals the range size.
@@ -181,6 +200,7 @@ private:
     
     // Threading
     std::vector<std::thread> cpu_threads_;
+    std::atomic<bool> gpu_search_used_{false};
     std::thread gpu_thread_;
     std::thread main_thread_;
     // Bumped by every start() under lifecycle_mutex_. Workers capture it at

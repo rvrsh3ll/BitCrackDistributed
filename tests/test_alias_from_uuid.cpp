@@ -120,16 +120,20 @@ TEST_CASE("PR17: setting the reward address keeps a uuid alias", "[pr17][alias]"
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("PR17: without a uuid the alias still follows the reward address", "[pr17][alias]") {
+TEST_CASE("PR17: without a uuid the alias comes from the node key, not the reward address", "[pr17][alias]") {
     QuietLogs quiet;
     auto dir = makeTempDir("legacy");
     {
+        // The address prefix is shared by every node paying to it, so it
+        // no longer names a node that has a key (see test_node_id_persist).
         NetworkManager nm(makeConfig(dir, ""), nullptr);
-        CHECK(nm.getLocalAlias() == "Anonymous");
+        const std::string key_alias = nm.getLocalAlias();
+        CHECK(key_alias.size() == 12);
+        CHECK(key_alias != "Anonymous");
         nm.setRewardAddress(kAddr);
-        CHECK(nm.getLocalAlias() == "1BvBMSEYst");
+        CHECK(nm.getLocalAlias() == key_alias);
         nm.setRewardAddress(kAddr2);
-        CHECK(nm.getLocalAlias() == "bc1qar0srr");
+        CHECK(nm.getLocalAlias() == key_alias);
     }
     std::filesystem::remove_all(dir);
 }

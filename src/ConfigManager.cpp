@@ -9,6 +9,7 @@
 #include <iomanip>
 #include "Logger.h"
 #include "SecretFile.h"
+#include "NodeIdentity.h"
 #include <filesystem>
 #include "json.hpp"
 
@@ -30,13 +31,49 @@ const Config& ConfigManager::getConfig() const { return config_; }
 void ConfigManager::setConfig(const Config& config) { config_ = config; }
 
 // Load configuration from JSON file
+namespace {
+// Reads and parses a config file (comments allowed). False, with a reason,
+// for an unreadable, empty, malformed or non-object file.
+bool parseConfigFile(const std::string& path, nlohmann::json& out, std::string& why) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) {
+        why = "cannot open the file";
+        return false;
+    }
+    std::ostringstream ss;
+    ss << file.rdbuf();
+    const std::string text = ss.str();
+    if (text.find_first_not_of(" \t\r\n") == std::string::npos) {
+        why = "the file is empty";
+        return false;
+    }
+    // Accept // and /* */ comments: the config examples in README.md and
+    // P2P_SETUP.md carry comments, and a strict parse used to reject the
+    // whole file (dropping reward_address and every other setting).
+    try {
+        out = nlohmann::json::parse(text, /*cb=*/nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/true);
+    } catch (const nlohmann::json::parse_error& e) {
+        why = e.what();
+        return false;
+    }
+    if (!out.is_object()) {
+        why = "not a JSON object";
+        return false;
+    }
+    return true;
+}
+}  // namespace
+
 bool ConfigManager::load() {
     parse_failed_path_.clear();
+    restored_from_backup_ = false;
     try {
         // If file doesn't exist, create default config
         if (!std::filesystem::exists(config_file_path_)) {
             Logger::info(std::string("Config file not found, creating default: ") + config_file_path_);
             config_ = Config(); // Use defaults
+            // Keep the node id the data directory remembers (see below).
+            config_.network.node_uuid = node_identity::loadNodeId(WorkState::resolveDataDir(config_.data_directory));
             return save(); // Save default config
         }
 
@@ -47,23 +84,50 @@ bool ConfigManager::load() {
             Logger::warn("Config file " + config_file_path_ +
                          " was readable by group/other; permissions narrowed to 0600");
         }
-        std::ifstream file(config_file_path_);
-        if (!file.is_open()) {
-            Logger::error(std::string("Failed to open config file: ") + config_file_path_);
-            return false;
-        }
-
-        // Accept // and /* */ comments: the config examples in README.md and
-        // P2P_SETUP.md carry comments, and a strict parse used to reject the
-        // whole file (dropping reward_address and every other setting).
         nlohmann::json j;
-        try {
-            j = nlohmann::json::parse(file, /*cb=*/nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/true);
-        } catch (const nlohmann::json::parse_error& e) {
-            parse_failed_path_ = config_file_path_;
-            Logger::error(std::string("Error parsing config file ") + config_file_path_ + ": " + e.what() +
-                          " (the file will not be overwritten; fix it or delete it to regenerate defaults)");
-            return false;
+        std::string why;
+        if (!parseConfigFile(config_file_path_, j, why)) {
+            // An empty or broken config.json (for example `jq ... config.json
+            // > config.json`, or a redirect whose command failed) used to
+            // start the node on defaults: no uuid, so a new alias that peers
+            // rejected, and every default setting. Restore the backup when
+            // there is a usable one; otherwise the caller refuses to start P2P.
+            const std::string bak = config_file_path_ + ".bak";
+            nlohmann::json jb;
+            std::string why_bak;
+            std::error_code ec;
+            if (std::filesystem::exists(bak, ec) && parseConfigFile(bak, jb, why_bak)) {
+                const std::string aside = config_file_path_ + ".broken." + node_identity::uniqueSuffix();
+                std::filesystem::rename(config_file_path_, aside, ec);
+                const bool kept = !ec;
+                std::string bak_text;
+                {
+                    std::ifstream bf(bak, std::ios::binary);
+                    std::ostringstream ss;
+                    ss << bf.rdbuf();
+                    bak_text = ss.str();
+                }
+                if (!secret_file::writeOwnerOnly(config_file_path_, bak_text)) {
+                    parse_failed_path_ = config_file_path_;
+                    Logger::error("CONFIG ERROR: " + config_file_path_ + " could not be parsed (" + why +
+                                  ") and restoring it from " + bak + " failed");
+                    return false;
+                }
+                restored_from_backup_ = true;
+                Logger::error("CONFIG RESTORED: " + config_file_path_ + " could not be parsed (" + why + "). " +
+                              (kept ? "It was moved to " + aside + " and " : std::string("It was ")) +
+                              "replaced with " + bak + ". Check the settings. To edit config.json safely, write "
+                              "to a temporary file first: jq '...' config.json > config.json.new && "
+                              "mv config.json.new config.json");
+                j = std::move(jb);
+            } else {
+                parse_failed_path_ = config_file_path_;
+                Logger::error("CONFIG ERROR: " + config_file_path_ + " could not be parsed (" + why + ")" +
+                              (std::filesystem::exists(bak, ec) ? "; " + bak + " is not usable either (" + why_bak + ")"
+                                                                : "; there is no " + bak + " to restore") +
+                              ". The file will not be overwritten; fix it, or delete it to regenerate defaults.");
+                return false;
+            }
         }
 
         // Parse JSON into Config struct
@@ -92,9 +156,19 @@ bool ConfigManager::load() {
 
         bool wrote_uuid = false;
         if (config_.network.node_uuid.empty()) {
-            config_.network.node_uuid = generateUuidV4();
+            // The data directory remembers the node id (node_id.json, next to
+            // node_key.json); a config.json without a uuid keeps that id
+            // instead of renaming the node.
+            const std::string saved = node_identity::loadNodeId(WorkState::resolveDataDir(config_.data_directory));
+            if (!saved.empty()) {
+                config_.network.node_uuid = saved;
+                Logger::warn("Config file " + config_file_path_ + " has no network.uuid; using the node id saved in " +
+                             node_identity::nodeIdPath(WorkState::resolveDataDir(config_.data_directory)) + ": " + saved);
+            } else {
+                config_.network.node_uuid = generateUuidV4();
+                Logger::info("Generated new node UUID for privacy: " + config_.network.node_uuid);
+            }
             wrote_uuid = true;
-            Logger::info("Generated new node UUID for privacy: " + config_.network.node_uuid);
         }
         if (wrote_uuid) {
             // Persist the generated UUID so aliases remain stable across restarts
@@ -194,6 +268,10 @@ void ConfigManager::toJson(const Config& config, std::string& json) const {
     j["network"]["claim_lease_factor"] = config.network.claim_lease_factor;
     j["network"]["claim_lease_min_s"] = config.network.claim_lease_min_s;
     j["network"]["claim_retry_interval_ms"] = config.network.claim_retry_interval_ms;
+    j["network"]["chunk_sizing"] = config.network.chunk_sizing;
+    j["network"]["chunk_target_s"] = config.network.chunk_target_s;
+    j["network"]["chunk_max_keys"] = config.network.chunk_max_keys;
+    if (config.network.consensus_v4_height != 0) j["network"]["consensus_v4_height"] = config.network.consensus_v4_height;
     j["network"]["claim_retry_max_interval_ms"] = config.network.claim_retry_max_interval_ms;
     if (!config.network.rescan_ranges_file.empty()) {
         j["network"]["rescan_ranges_file"] = config.network.rescan_ranges_file;
@@ -315,6 +393,10 @@ bool ConfigManager::fromJson(const std::string& json, Config& config) const {
             config.network.claim_retry_interval_ms = net.value("claim_retry_interval_ms", config.network.claim_retry_interval_ms);
             config.network.claim_retry_max_interval_ms = net.value("claim_retry_max_interval_ms", config.network.claim_retry_max_interval_ms);
             config.network.rescan_ranges_file = net.value("rescan_ranges_file", config.network.rescan_ranges_file);
+            config.network.chunk_sizing = net.value("chunk_sizing", config.network.chunk_sizing);
+            config.network.chunk_target_s = net.value("chunk_target_s", config.network.chunk_target_s);
+            config.network.chunk_max_keys = net.value("chunk_max_keys", config.network.chunk_max_keys);
+            config.network.consensus_v4_height = net.value("consensus_v4_height", config.network.consensus_v4_height);
             if (net.contains("rescan_ignore_completions_from") && net["rescan_ignore_completions_from"].is_array()) {
                 config.network.rescan_ignore_completions_from.clear();
                 for (const auto& a : net["rescan_ignore_completions_from"]) {

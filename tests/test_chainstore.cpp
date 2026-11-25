@@ -63,6 +63,9 @@ TEST_CASE("chainstore persists and reloads keyspace blocks", "[chainstore]") {
     REQUIRE(store.appendBlock(block, block_hash, block.header.prev_hash));
     REQUIRE(store.persistTip(block_hash, block.header.height));
     REQUIRE(store.size() == 1);
+    // Metadata is batched (at most once per KeyspaceChainStore::kMetaInterval);
+    // write it now, as the node does at the end of a sync batch and on stop.
+    REQUIRE(store.flushMeta());
 
     // Re-open from disk
     KeyspaceChainStore store2(tmp.string());

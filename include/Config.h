@@ -25,7 +25,10 @@ struct NetworkConfig {
     uint32_t block_time_seconds = 300;   // Target block assembly cadence for independent-node mode
     uint32_t protocol_version = 3;       // Wire protocol version (2: block gossip, 3: AUTHCHALLENGE/AUTH peer auth)
     bool compat_work_verbs = true;       // Continue listening/emitting legacy WORK* verbs
-    uint32_t commit_quorum = 2;         // Number of unique peers required to accept a commit per range
+    uint32_t commit_quorum = 2;         // Legacy COMMIT assembly (not used for blocks once consensus v4 is active)
+    // Consensus v4 activation height (ConsensusRules.h); 0 = the built-in
+    // network-wide height. Test networks only: it must match on every node.
+    uint64_t consensus_v4_height = 0;
     // Randomized chunk assignment
     bool enable_random_chunks = true;   // When true, coordinator/independent node samples random chunks first
     uint32_t random_chunk_retries = 4;   // How many random attempts before falling back to sequential
@@ -46,6 +49,14 @@ struct NetworkConfig {
     // (claims then only happen on connect/handshake and the keepalive tick).
     uint32_t claim_retry_interval_ms = 2000;
     uint32_t claim_retry_max_interval_ms = 16000;
+    // Size of the chunks this node claims (a local choice; any size is valid
+    // on the network). "gpu" (default): a node whose GPU searches claims
+    // chunks of about chunk_target_s seconds of work at its measured rate,
+    // capped at chunk_max_keys; CPU-only nodes keep the fixed 10M keys.
+    // "always": size by rate on CPU nodes too. "off": always 10M keys.
+    std::string chunk_sizing = "gpu";
+    uint32_t chunk_target_s = 90;
+    uint64_t chunk_max_keys = 32000000000ull;  // ~5.5 min at 97 Mkeys/s
     // Local re-search list (C5). A file with one `start-end` hex range per
     // line (# comments allowed; a relative path is under data_directory).
     // Each listed range that no other node has completed is un-retired in
@@ -173,6 +184,16 @@ inline bool isLegacyDefault(std::vector<std::string> v) {
 }
 }  // namespace bootstrap_defaults
 
+
+// Default payout split: 90% to the finder, 10% to the other contributors.
+inline constexpr double kDefaultFinderRewardPct = 0.90;
+
+// finder_reward_pct as the payout uses it: values outside [0, 1] (or NaN)
+// fall back to the 90% default.
+inline double effectiveFinderRewardPct(double pct) {
+    return (pct >= 0.0 && pct <= 1.0) ? pct : kDefaultFinderRewardPct;  // NaN fails both tests
+}
+
 struct Config {
     std::string reward_address;  // Bitcoin address for receiving rewards
 
@@ -197,6 +218,10 @@ struct Config {
     
     // Advanced settings
     uint32_t cpu_thread_count = 0; // 0 = auto-detect
+    // --gpu-only (command line only; never read from or written to
+    // config.json): start no CPU search workers, the CUDA worker scans
+    // everything. cpu_thread_count 0 keeps meaning auto-detect.
+    bool gpu_only = false;
     uint32_t random_seed = 0; // 0 = time-based
     bool benchmark_mode = false;
     uint32_t benchmark_duration_seconds = 60;
@@ -231,8 +256,13 @@ struct Config {
     // Puzzle pool settings
     // Note: puzzle selection is now automatic, starting at puzzle 71. User
     // configurable puzzle number removed to prevent manual override.
-    double finder_reward_pct = 0.90;  // 90% to finder
-    double pool_reward_pct = 0.10;    // 10% to pool contributors
+    // Payout split: finder_reward_pct of the prize goes to the finder's
+    // reward address; the contributor pool is always the rest
+    // (1 - finder_reward_pct), split among the other contributors by keys.
+    // (A separate pool_reward_pct used to sit here; nothing read it, and two
+    // numbers could disagree, so it was removed.) A value outside [0, 1] or
+    // not a number falls back to kDefaultFinderRewardPct (90%).
+    double finder_reward_pct = kDefaultFinderRewardPct;
     bool track_contributions = true;
     std::string bitcoin_rpc_url = "http://127.0.0.1:8332";
     std::string bitcoin_rpc_user;

@@ -36,11 +36,16 @@ public:
     // parse. save() then refuses to overwrite that file so a typo does not
     // silently replace the user's settings with defaults.
     bool lastLoadFailedToParse() const { return parse_failed_path_ == config_file_path_ && !parse_failed_path_.empty(); }
+    // True when the last load() found config.json empty or unparsable and
+    // replaced it with a parsable <config>.bak (the broken file is kept as
+    // <config>.broken.<suffix>).
+    bool lastLoadRestoredFromBackup() const { return restored_from_backup_; }
     
 private:
     Config config_;
     std::string config_file_path_;
     std::string parse_failed_path_;
+    bool restored_from_backup_ = false;
     
     // JSON serialization helpers
     void toJson(const Config& config, std::string& json) const;

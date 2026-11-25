@@ -316,13 +316,15 @@ int safe_cuda_runtime_init(int device_ordinal) {
             return (int)rc;
         }
 
-        // Validate that we can create/destroy a context.
+        // Validate that we can obtain/release a context. Use the primary-context
+        // API, whose signature is stable across CUDA 12.x and 13.x (cuCtxCreate
+        // changed arity in CUDA 13).
         CUcontext ctx = NULL;
-        rc = cuCtxCreate_v2(&ctx, 0, device);
+        rc = cuDevicePrimaryCtxRetain(&ctx, device);
         if (rc != CUDA_SUCCESS) {
             return (int)rc;
         }
-        (void)cuCtxDestroy_v2(ctx);
+        (void)cuDevicePrimaryCtxRelease(device);
         return 0;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
         return -9999;
@@ -336,9 +338,9 @@ int safe_cuda_runtime_init(int device_ordinal) {
     if (rc != CUDA_SUCCESS) return (int)rc;
 
     CUcontext ctx = NULL;
-    rc = cuCtxCreate_v2(&ctx, 0, device);
+    rc = cuDevicePrimaryCtxRetain(&ctx, device);
     if (rc != CUDA_SUCCESS) return (int)rc;
-    (void)cuCtxDestroy_v2(ctx);
+    (void)cuDevicePrimaryCtxRelease(device);
     return 0;
 #endif
 }

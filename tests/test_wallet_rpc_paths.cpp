@@ -478,7 +478,6 @@ TEST_CASE("PR29: waitForConfirmations reads confirmations from the node", "[pr29
     CHECK(seen[1]["params"] == json::array({txid, 0, true}));
 }
 
-#endif  // !_WIN32
 
 // Dust payees and post-fee amounts.
 namespace {
@@ -686,3 +685,5 @@ TEST_CASE("PR40: the fee counts a change output only when there is change", "[pr
         CHECK(feeOf(t) == change2);
     }
 }
+// (POSIX-only: FakeRpcServer uses BSD sockets.)
+#endif  // !_WIN32

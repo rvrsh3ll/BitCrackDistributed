@@ -45,6 +45,11 @@ public:
     // Request work for a peer (returns a copy of WorkChunk, thread-safe)
     // Returns std::optional<WorkChunk> - empty if no work available
     std::optional<WorkChunk> assignWork(const std::string& peer_alias);
+    // Size of the chunks assignWork() emits from now on (0 = back to the
+    // size given to initializeKeyspace). initializeKeyspace resets it.
+    void setChunkSize(uint64_t keys);
+    uint64_t chunkSize() const;
+    uint64_t baseChunkSize() const;  // the size given to initializeKeyspace
     // Whether assignWork() could hand out a chunk of this range now
     // (an unassigned active chunk, a requeued range, or keys left past the
     // frontier / in a gap). False also when uninitialized.

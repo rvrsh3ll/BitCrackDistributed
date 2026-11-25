@@ -15,6 +15,9 @@ set(_NETWORK_SOURCE_CANDIDATES
     P2PKeyspaceManager.cpp
     NodeStats.cpp
     NodeApi.cpp
+    KeyspaceMap.cpp
+    ChainSplit.cpp
+    ConsensusRules.cpp
 )
 
 set(NETWORK_SOURCES)
@@ -57,10 +60,24 @@ foreach(HDR ${_NETWORK_HEADER_CANDIDATES})
     endif()
 endforeach()
 
+# The HTML dashboard served by NodeApi at / is compiled into the binary
+# (no files to ship, nothing fetched from the network at run time).
+set(_DASHBOARD_HTML ${CMAKE_CURRENT_SOURCE_DIR}/dashboard/dashboard.html)
+set(_DASHBOARD_CPP ${CMAKE_CURRENT_BINARY_DIR}/generated/DashboardHtml.cpp)
+add_custom_command(
+    OUTPUT ${_DASHBOARD_CPP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DIN=${_DASHBOARD_HTML} -DOUT=${_DASHBOARD_CPP} -DNS=bcd_embed -DNAME=kDashboardHtml
+            -P ${CMAKE_SOURCE_DIR}/cmake/EmbedFile.cmake
+    DEPENDS ${_DASHBOARD_HTML} ${CMAKE_SOURCE_DIR}/cmake/EmbedFile.cmake
+    COMMENT "Embedding the HTML dashboard"
+    VERBATIM)
+
 # Create the network library
 add_library(NetworkLayer STATIC 
     ${NETWORK_SOURCES}
     ${NETWORK_HEADERS}
+    ${_DASHBOARD_CPP}
 )
 
 # Include directories

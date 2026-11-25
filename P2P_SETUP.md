@@ -26,7 +26,7 @@ To test P2P networking on a single machine, you'll need to run multiple instance
 Create a per-node `config.json` for Node 1 by copying `config.json` and adjusting the values shown below:
 ```json
 {
-  "reward_address": "bc1...", // alias derives from this
+  "reward_address": "bc1...", // payout address; the alias comes from network.uuid (kept in node_id.json)
   "auto_start": false,
   "network": {
     "enable_p2p": true,

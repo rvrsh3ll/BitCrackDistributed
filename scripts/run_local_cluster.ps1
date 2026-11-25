@@ -6,7 +6,7 @@ Usage: run in a PowerShell prompt from repository root:
 This script will:
 - Stop existing bitcrack processes
 - Clean data directories for a reproducible run
-- Start three nodes with configs in dist/windows/gui
+- Start three nodes with configs in dist/windows/cli
 - Wait for them to become reachable and form a P2P ring
 - Inject two COMMIT messages that reach the quorum and verify block minting + persistence
 - Restart node2 to verify replay of persisted KeyspaceBlock
@@ -22,12 +22,12 @@ param(
     [int]$TimeoutSeconds = 30
 )
 
-# If the caller did not explicitly pass ExePath and a packaged GUI exe exists under dist, prefer that exe.
+# If the caller did not explicitly pass ExePath and a packaged CLI exe exists under dist, prefer that exe.
 try {
     if (-not $PSBoundParameters.ContainsKey('ExePath')) {
-        $candidate = Join-Path (Get-Location) 'dist/windows/gui/bitcrack-distributed-gui.exe'
+        $candidate = Join-Path (Get-Location) 'dist/windows/cli/bitcrack-distributed-cli.exe'
         if (Test-Path $candidate) {
-            Write-Host "Found packaged GUI binary at $candidate; overriding ExePath"
+            Write-Host "Found packaged CLI binary at $candidate; overriding ExePath"
             $ExePath = $candidate
         }
     }
@@ -133,13 +133,13 @@ Stop-BitCrackProcesses
 
 Write-Host "Cleaning test data dirs..."
 # Ensure entire data directory is removed and recreated for a clean baseline
-if (Test-Path 'dist/windows/gui/data') { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'dist/windows/gui/data' }
-New-Item -Path dist/windows/gui/data -ItemType Directory -Force | Out-Null
-New-Item -Path dist/windows/gui/data/node1 -ItemType Directory -Force | Out-Null
-New-Item -Path dist/windows/gui/data/node2 -ItemType Directory -Force | Out-Null
-New-Item -Path dist/windows/gui/data/node3 -ItemType Directory -Force | Out-Null
+if (Test-Path 'dist/windows/cli/data') { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'dist/windows/cli/data' }
+New-Item -Path dist/windows/cli/data -ItemType Directory -Force | Out-Null
+New-Item -Path dist/windows/cli/data/node1 -ItemType Directory -Force | Out-Null
+New-Item -Path dist/windows/cli/data/node2 -ItemType Directory -Force | Out-Null
+New-Item -Path dist/windows/cli/data/node3 -ItemType Directory -Force | Out-Null
 
-$baseConfigPath = Join-Path -Path (Get-Location) -ChildPath "dist/windows/gui"
+$baseConfigPath = Join-Path -Path (Get-Location) -ChildPath "dist/windows/cli"
 $node1Config = Join-Path $baseConfigPath "node1_config.json"
 $node2Config = Join-Path $baseConfigPath "node2_config.json"
 $node3Config = Join-Path $baseConfigPath "node3_config.json"

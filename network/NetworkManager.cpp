@@ -5,6 +5,9 @@
 
 #include "Logger.h"
 #include "NetworkManager.h"
+#include "ClaimCheck.h"
+#include "ConsensusRules.h"
+#include "ChunkSizing.h"
 #include "SecretFile.h"
 #include "NodeIdentity.h"
 #include <openssl/rand.h>
@@ -71,8 +74,30 @@ NetworkManager::NetworkManager(const Config& config, BitCrackEngine* engine)
       reward_system_(config.contribution_weight),
     puzzle_manager_(std::make_unique<PuzzleManager>()),
     bitcoin_wallet_(std::make_unique<BitcoinWallet>(config.bitcoin_rpc_url, config.bitcoin_rpc_user, config.bitcoin_rpc_password)) {
-    // Derive local alias from persisted node UUID (privacy-preserving) or fallback
-    local_alias_ = deriveLocalAlias(config_.network.node_uuid, config_.reward_address);
+    // The alias comes from the node id: config.json's uuid, or the copy
+    // kept in <data_dir>/node_id.json when config.json has none (an emptied
+    // or regenerated config.json used to rename the node to its reward
+    // address prefix, which every node paying to that address shares, and
+    // peers then rejected it as an impostor of the pinned alias). With no
+    // id at all, the alias comes from the node key, so it needs the key
+    // loaded first. Local state only: HELLO/AUTH carry the alias as before.
+    ensureContributionIdentity();
+    {
+        std::string id_note;
+        config_.network.node_uuid = node_identity::resolveNodeId(config_.data_directory, config_.network.node_uuid, &id_note);
+        std::string pub;
+        {
+            std::lock_guard<std::mutex> lk(contribution_mutex_);
+            pub = contribution_pubkey_hex_;
+        }
+        key_alias_ = node_identity::aliasFromPubkey(pub);
+        if (id_note != "config.json") {
+            Logger::info(config_.network.node_uuid.empty()
+                             ? "No node id configured or saved; alias from the node key: " + key_alias_
+                             : "config.json has no network.uuid; using the node id saved in " + id_note);
+        }
+    }
+    local_alias_ = deriveLocalAlias(config_.network.node_uuid, config_.reward_address, key_alias_);
     reward_prefix_alias_ = deriveLocalAlias("", config_.reward_address);
     loadRescanListOnce();  // C5: before any thread reads the list
     {
@@ -161,8 +186,20 @@ NetworkManager::NetworkManager(const Config& config, BitCrackEngine* engine)
         bitcoin_wallet_->setElectrumServers(config_.electrum_servers);
     }
 
+    // Consensus v4 (claim cap, keys <= span, commit quorum) from its
+    // activation height on; set before persisted blocks are replayed.
+    consensus_engine_.setV4ActivationHeight(consensus_v4::activationHeight(config_.network.consensus_v4_height));
+    Logger::info("Consensus v4 rules activate at block height " +
+                 std::to_string(consensus_engine_.v4ActivationHeight()) + " (claim cap " +
+                 std::to_string(consensus_v4::kMaxClaimKeys) + " keys, commit quorum " +
+                 std::to_string(consensus_v4::kCommitQuorum) + " nodes)");
+
     // Initialize persisted chainstore and work state holder
     chain_store_ = std::make_unique<KeyspaceChainStore>(config_.data_directory);
+    // A verified-prefix checkpoint only holds for the consensus rules it was
+    // made under (see KeyspaceChainStore::setTrustContext).
+    if (chain_store_)
+        chain_store_->setTrustContext("v4=" + std::to_string(consensus_engine_.v4ActivationHeight()));
     if (chain_store_ && !chain_store_->open()) {
         Logger::warn("Failed to open chainstore for data directory: " + config_.data_directory);
     }
@@ -191,7 +228,8 @@ NetworkManager::NetworkManager(const Config& config, BitCrackEngine* engine)
 
     // Replay persisted chainstore blocks into consensus engine to reconstruct chain
     if (chain_store_) {
-        replayPersistedBlocks(chain_store_->allBlocks(), "chainstore");
+        const auto trusted = chain_store_->trustedRecordHashes();
+        replayPersistedBlocks(chain_store_->allBlocks(), "chainstore", &trusted);
     }
 
     // Backward compatibility: import any legacy blocks from WorkState if chainstore was empty
@@ -217,6 +255,8 @@ NetworkManager::~NetworkManager() {
     stopPayoutWorker();  // It uses the wallet and puzzle manager
     stopSolveChecker();  // It can switch puzzles
     stop();
+    // Also for a node that was never started (stop() returned early).
+    if (chain_store_) refreshChainstoreCheckpoint();
 #ifdef WINDOWS
     WSACleanup();
 #endif
@@ -354,6 +394,10 @@ void NetworkManager::stop() {
             h.thread.join();
         }
     }
+    if (chain_store_) {
+        refreshChainstoreCheckpoint();  // blocks accepted since startup: fast next start
+        chain_store_->flushMeta();      // metadata batched while syncing
+    }
 
     if (config_.enable_rewards) {
         auto total_units = reward_units_total_.load();
@@ -430,7 +474,8 @@ void NetworkManager::attachOrphansFor(const std::string& parent_hash) {
     }
 }
 
-size_t NetworkManager::replayPersistedBlocks(const std::vector<KeyspaceBlock>& blocks, const std::string& source) {
+size_t NetworkManager::replayPersistedBlocks(const std::vector<KeyspaceBlock>& blocks, const std::string& source,
+                                             const std::unordered_set<std::string>* trusted) {
     // Rebuilds the in-memory chain from this node's own persisted
     // blocks. They are already stored, so nothing is written back, nobody is
     // penalized, and a block whose parent comes later in the file is retried
@@ -438,34 +483,48 @@ size_t NetworkManager::replayPersistedBlocks(const std::vector<KeyspaceBlock>& b
     // Each block is mapped (nonce mined) once, and the consensus hash
     // of every stored block is remembered so a block that later arrives over
     // BLOCK is not stored a second time.
-    std::vector<ConsensusEngine::Block> pending;
+    // Blocks inside the chainstore's verified prefix (`trusted`) skip only
+    // the v4 attestation signature verification: this node verified them
+    // before it stored them, and the prefix is HMAC-checked on open.
+    struct Pending {
+        ConsensusEngine::Block block;
+        std::string record_hash;
+        bool trusted = false;
+    };
+    std::vector<Pending> pending;
     pending.reserve(blocks.size());
     size_t linked = 0;
+    size_t linked_trusted = 0;
+    std::unordered_set<std::string> linked_records;
     std::string last_err;
     for (const auto& kb : blocks) {
-        ConsensusEngine::Block b;
+        Pending p;
         std::string err;
-        if (!ConsensusEngine::blockFromKeyspace(kb, b, &err)) {
+        if (!ConsensusEngine::blockFromKeyspace(kb, p.block, &err)) {
             last_err = err;
             continue;
         }
+        p.record_hash = KeyspaceChainStore::recordHash(kb.header);
+        p.trusted = trusted && trusted->count(p.record_hash) != 0;
         {
             std::lock_guard<std::mutex> lk(consensus_mutex_);
-            persisted_block_hashes_.insert(normalizeHash(ConsensusEngine::computeBlockHash(b.header)));
+            persisted_block_hashes_.insert(normalizeHash(ConsensusEngine::computeBlockHash(p.block.header)));
         }
-        pending.push_back(std::move(b));
+        pending.push_back(std::move(p));
     }
     bool progress = true;
     while (progress && !pending.empty()) {
         progress = false;
-        std::vector<ConsensusEngine::Block> next;
-        for (auto& b : pending) {
+        std::vector<Pending> next;
+        for (auto& p : pending) {
             std::string err;
-            if (consensus_engine_.addBlock(b, &err) || err == "Block already known") {
+            if (consensus_engine_.addBlock(p.block, &err, p.trusted) || err == "Block already known") {
                 ++linked;
+                if (p.trusted) ++linked_trusted;
+                linked_records.insert(p.record_hash);
                 progress = true;
             } else if (err == "Missing parent block") {
-                next.push_back(std::move(b));
+                next.push_back(std::move(p));
             } else {
                 last_err = err;
             }
@@ -473,6 +532,7 @@ size_t NetworkManager::replayPersistedBlocks(const std::vector<KeyspaceBlock>& b
         pending.swap(next);
     }
     last_replay_unlinked_ = blocks.size() - linked;
+    last_replay_trusted_ = linked_trusted;
     const size_t unlinked = blocks.size() - linked;
     if (!blocks.empty()) {
         const auto snap = consensus_engine_.getChainSnapshot();
@@ -480,10 +540,42 @@ size_t NetworkManager::replayPersistedBlocks(const std::vector<KeyspaceBlock>& b
                      (snap.initialized ? " (tip height " + std::to_string(snap.height) + ")" : std::string()) +
                      (unlinked ? "; " + std::to_string(unlinked) + " not linked to this chain (" +
                                      (last_err.empty() ? std::string("missing parent") : last_err) + ")"
-                               : std::string()));
+                               : std::string()) +
+                     (trusted ? "; " + std::to_string(linked_trusted) +
+                                    " from the verified checkpoint (attestation signatures not re-checked)"
+                              : std::string()));
         if (chain_store_ && snap.initialized) chain_store_->persistTip(snap.tip_hash, static_cast<uint32_t>(snap.height));
     }
+    if (trusted && chain_store_) refreshChainstoreCheckpoint(&linked_records);
     return linked;
+}
+
+void NetworkManager::refreshChainstoreCheckpoint(const std::unordered_set<std::string>* linked, bool force) {
+    if (!chain_store_) return;
+    std::lock_guard<std::mutex> lk(checkpoint_mutex_);
+    const auto now = std::chrono::steady_clock::now();
+    if (!force && checkpoint_at_ != std::chrono::steady_clock::time_point{} && now - checkpoint_at_ < kCheckpointInterval)
+        return;
+    checkpoint_at_ = now;
+    // The prefix grows over records whose block is in the consensus chain,
+    // i.e. passed ConsensusEngine::addBlock (peer blocks always with every
+    // check). It stops at the first one that is not (an orphan, a block that
+    // failed, an unreadable record), so nothing unverified is ever covered.
+    const auto hashes = chain_store_->unverifiedRecordHashes();
+    size_t n = 0;
+    for (const auto& h : hashes) {
+        if (h.empty()) break;
+        if (!(linked && linked->count(h))) {
+            const auto kb = chain_store_->getBlock(h);
+            if (!kb) break;
+            ConsensusEngine::Block b;
+            if (!ConsensusEngine::blockFromKeyspace(*kb, b, nullptr)) break;
+            if (!consensus_engine_.hasBlock(ConsensusEngine::computeBlockHash(b.header))) break;
+        }
+        ++n;
+    }
+    if (n > 0 && !chain_store_->advanceVerified(n))
+        Logger::warn("Chainstore: could not extend the verified checkpoint; the next start verifies more blocks");
 }
 
 bool NetworkManager::ingestKeyspaceBlock(const std::string& peer_alias,
@@ -529,6 +621,11 @@ bool NetworkManager::ingestKeyspaceBlock(const std::string& peer_alias,
         return false;
     }
 
+    if (err.rfind("v4:", 0) == 0) {
+        // Valid for older nodes, which relay it in good faith: no strike.
+        Logger::info("KeyspaceBlock from " + peer_alias + " not added: " + err);
+        return false;
+    }
     Logger::warn("Failed to add KeyspaceBlock from " + peer_alias + ": " + err);
     if (penalize_peer) {
         recordPeerStrike(peer_alias, "invalid keyspace block: " + err);
@@ -559,6 +656,22 @@ std::vector<PeerDetail> NetworkManager::getPeerDetails() const {
         out.push_back(std::move(d));
     }
     return out;
+}
+
+std::vector<NetworkManager::LedgerRange> NetworkManager::getCompletedLedger() const {
+    std::vector<LedgerRange> out;
+    if (!work_state_) return out;
+    const auto details = work_state_->completedDetails();
+    out.reserve(details.size());
+    for (const auto& e : details) {
+        if (e.start.empty() || e.end.empty()) continue;
+        out.push_back({e.start, e.end, e.peer, e.keys, e.rewarded});
+    }
+    return out;
+}
+
+size_t NetworkManager::getCompletedLedgerCount() const {
+    return work_state_ ? work_state_->completedCount() : 0;
 }
 
 ChunkSummary NetworkManager::getChunkSummary() const {
@@ -1042,10 +1155,12 @@ void NetworkManager::peerManagementLoop() {
                         Logger::warn("Consensus watchdog releasing stalled chunk " + c.chunk_id +
                                      " (assigned to " + c.assigned_to + ", elapsed=" + std::to_string(elapsed) + "s)");
                         work_coordinator_.releaseAssignmentForChunk(c.chunk_id);
-                        // Also allow re-claiming by removing from claimed set
+                        // Also allow re-claiming by removing from claimed set,
+                        // and give the holder its slot back (it stayed counted,
+                        // so the holder was struck for too_many_active_chunks).
                         {
                             std::lock_guard<std::mutex> claim_lk(chunk_claim_mutex_);
-                            claims_.claimed.erase(claimKey(c.chunk_id, c.assigned_to));
+                            claims_.releaseClaim(claimKey(c.chunk_id, c.assigned_to), c.assigned_to);
                         }
                         released++;
                     }
@@ -1082,6 +1197,8 @@ void NetworkManager::peerManagementLoop() {
                 tryClaimNextChunk();
         }
 
+        expireOwnCommitments();
+
         // Consensus chain block assembly
         if (isConsensusChainEnabled()) {
             uint32_t block_time = config_.network.block_time_seconds == 0 ? 300 : config_.network.block_time_seconds;
@@ -1107,6 +1224,7 @@ uint64_t NetworkManager::addPeer(SOCKET socket, const std::string& address, int 
 
     // Join handlers of peers that already went away before adding another.
     reapFinishedPeerHandlers();
+    socket_util::setNoDelay(socket);  // inbound and outbound links alike
     
     // Queued for discovery after peers_mutex_ is released, so
     // known_peer_mutex_ is never taken while holding peers_mutex_.
@@ -1268,39 +1386,9 @@ void NetworkManager::peerHandler(uint64_t peer_id, SOCKET sock, std::shared_ptr<
         if (bytes_received > 0) {
             buffer[bytes_received] = '\0';
             std::string message(buffer, static_cast<size_t>(bytes_received));
-            // Diagnostic: log the raw incoming message for debugging COMMITs
-            Logger::debug(std::string("Raw peer data from ") + peer_alias + ": '" + message + "'");
-            // Additional diagnostics: log buffer size, first/last bytes and newline positions
-            try {
-                std::ostringstream hexoss;
-                hexoss << std::hex << std::setfill('0');
-                for (int i = 0; i < std::min<int>(bytes_received, 256); ++i) {
-                    hexoss << std::setw(2) << static_cast<int>(static_cast<unsigned char>(buffer[i]));
-                }
-                Logger::debug(std::string("Raw peer bytes (len=") + std::to_string(bytes_received) + ": hex=" + hexoss.str() + ")");
-                // Locate newline positions to detect partial messages
-                std::ostringstream nlpos;
-                bool first = true;
-                for (int i = 0; i < bytes_received; ++i) {
-                    if (buffer[i] == '\n') {
-                        if (!first) nlpos << ',';
-                        nlpos << i;
-                        first = false;
-                    }
-                }
-                if (!first) {
-                    Logger::debug(std::string("Newline positions in buffer: ") + nlpos.str());
-                } else {
-                    Logger::debug("No newline characters found in current peer buffer read");
-                }
-                // Log if COMMIT word appears in raw buffer copy
-                if (message.find("COMMIT") != std::string::npos) {
-                    Logger::info(std::string("Raw peer buffer contains 'COMMIT' from ") + peer_alias);
-                }
-            } catch (...) {
-                // swallow any logging errors
-            }
-
+            // Raw-read dumps (whole buffer, hex, newline positions) were
+            // removed: a sync logged ~2 KB per block on the receive thread and a
+            // slow console then stalled the sync. Lines are logged (capped) below.
             // Append to this peer's receive buffer and take every complete
             // newline-terminated line out of it, leaving any partial tail.
             std::vector<std::string> lines;
@@ -1446,7 +1534,8 @@ void NetworkManager::handlePeerMessageById(uint64_t peer_id, const std::string& 
     while (start < message.size()) {
         size_t end = message.find('\n', start);
         std::string line = (end == std::string::npos) ? message.substr(start) : message.substr(start, end - start);
-        Logger::debug(std::string("Parsing line (pos=") + std::to_string(start) + ".." + std::to_string(end == std::string::npos ? message.size() : end) + "): '" + line + "'");
+        if (Logger::debugEnabled())
+            Logger::debug(std::string("Parsing line (pos=") + std::to_string(start) + ".." + std::to_string(end == std::string::npos ? message.size() : end) + "): '" + Logger::snippet(line) + "'");
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (!line.empty()) {
             // HELLO handshake
@@ -1569,16 +1658,15 @@ void NetworkManager::handlePeerMessageById(uint64_t peer_id, const std::string& 
             trim(verb); trim(payload);
             // Normalize verb to uppercase for robust comparisons
             std::transform(verb.begin(), verb.end(), verb.begin(), [](unsigned char c){ return static_cast<char>(std::toupper(c)); });
-            Logger::debug("Parsed message: verb='" + verb + "' payload='" + payload + "'");
+            if (Logger::debugEnabled())
+                Logger::debug("Parsed message: verb='" + verb + "' payload='" + Logger::snippet(payload) + "'");
 
             // Dispatch through the verb table (verbRoutes()).
             const PeerLine msg{peer_id, peer_alias, verb, payload, line};
             const auto& routes = verbRoutes();
             const auto route = routes.find(verb);
             if (route == routes.end()) {
-                Logger::debug("Received unknown message from peer: " + line);
-                // Additional diagnostics: log unknown raw messages explicitly at info level
-                Logger::info(std::string("Unhandled raw message from ") + peer_alias + ": '" + line + "'");
+                Logger::info(std::string("Unhandled raw message from ") + peer_alias + ": '" + Logger::snippet(line) + "'");
                 // Fallback: legacy WORK* verbs are deprecated in consensus-only mode
             } else if (route->second.claim_traffic && !acceptsClaimTrafficFrom(peer_id)) {
                 // Half-authenticated peers (sent AUTHCHALLENGE, no
@@ -1640,6 +1728,7 @@ const std::unordered_map<std::string, NetworkManager::VerbRoute>& NetworkManager
         {"BLOCKREQ", {[](M& nm, const L& m) { nm.recvBlockReq(m); }, false}},
         {"BLOCKDATA", {[](M& nm, const L& m) { nm.recvBlockData(m); }, false}},
         {"COMMIT", {[](M& nm, const L& m) { nm.handleCommitMessage(m.peer_alias, m.payload); }, false}},
+        {"COMMITATT", {[](M& nm, const L& m) { nm.handleCommitAttestation(m.peer_alias, m.payload, m.peer_id); }, false}},
     };
     return routes;
 }
@@ -2133,7 +2222,8 @@ void NetworkManager::sendToPeer(const std::string& peer_alias, const std::string
     std::lock_guard<std::mutex> lock(peers_mutex_);
     for (size_t i = 0; i < connected_peers_.size(); ++i) {
         if (connected_peers_[i].alias == peer_alias) {
-            Logger::debug("Sending message to peer '" + peer_alias + "': " + message.substr(0, 50) + "...");
+            if (Logger::debugEnabled())
+                Logger::debug("Sending message to peer '" + peer_alias + "': " + Logger::snippet(message));
             sendToPeerUnlocked(connected_peers_[i], message);
             return;
         }
@@ -2529,7 +2619,15 @@ std::vector<std::string> NetworkManager::evictIdlePeersLocked(std::chrono::stead
     constexpr auto idle_timeout = std::chrono::seconds(300);
     const auto cutoff_time = now - idle_timeout;
     std::vector<std::string> evicted;
+    const std::string self = getLocalAlias();
     for (auto it = connected_peers_.begin(); it != connected_peers_.end();) {
+        // A link to ourselves (a seed list naming our own address) never
+        // contributes. Evicting it released our own alias as a lost peer and
+        // dropped our own assignments (seed3, 2026-11-21 19:50).
+        if (it->alias == self) {
+            ++it;
+            continue;
+        }
         if (it->last_contribution < cutoff_time) {
             Logger::warn("Evicting idle peer " + it->alias + " (no contribution for 300s) on " + it->address + ":" +
                          std::to_string(it->port));
@@ -2596,6 +2694,44 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
 }
 
     // Chunk Claim Consensus Handlers
+    void NetworkManager::noteOwnChunkStartedLocked(const std::string& start_key, const std::string& end_key) {
+        // Caller holds state_mutex_.
+        own_chunk_started_ = std::chrono::steady_clock::now();
+        own_chunk_timed_ = start_key + "|" + end_key;
+    }
+
+    uint64_t NetworkManager::chunkSizeForNextClaim() {
+        // A local choice (ChunkSizing.h): peers accept any chunk size.
+        const uint64_t base = work_coordinator_.baseChunkSize();
+        const bool gpu = engine_ && engine_->gpuSearchUsed();
+        const auto mode = chunk_sizing::parseMode(config_.network.chunk_sizing);
+        double rate = 0.0;
+        {
+            std::lock_guard<std::mutex> lk(state_mutex_);
+            rate = measured_rate_;
+        }
+        const uint64_t size = chunk_sizing::sizes(mode, gpu)
+                                  ? chunk_sizing::nextChunkSize(base, rate, config_.network.chunk_target_s,
+                                                                std::min<uint64_t>(config_.network.chunk_max_keys,
+                                                                                   consensus_v4::kMaxClaimKeys))
+                                  : base;
+        bool changed = false;
+        {
+            std::lock_guard<std::mutex> lk(state_mutex_);
+            changed = size != last_claim_size_;
+            last_claim_size_ = size;
+        }
+        if (changed && size != base) {
+            std::ostringstream r;
+            r << std::fixed << std::setprecision(2) << rate / 1e6;
+            Logger::info("Chunk sizing: " + std::string(gpu ? "GPU" : "CPU") + " node at " + r.str() +
+                         " Mkeys/s; claiming chunks of " + std::to_string(size) + " keys (target " +
+                         std::to_string(config_.network.chunk_target_s) + " s, cap " +
+                         std::to_string(config_.network.chunk_max_keys) + ")");
+        }
+        return size;
+    }
+
     bool NetworkManager::tryClaimNextChunk() {
         // Enforce peer requirements: must have minimum peers to claim work.
         // Only handshaken peers count: a peer that has not exchanged
@@ -2610,6 +2746,22 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
                 return false;
             }
         }
+
+        // One claim attempt at a time. The pending check below and the
+        // proposal are not one step (assignWork can take seconds), so the
+        // idle retry and the work-depleted trigger both passed it and
+        // proposed two chunks; both were approved, the engine switched to the
+        // second and the first stayed claimed at the peers, which struck us
+        // for too_many_active_chunks (seed1, 2026-11-22).
+        bool expected_idle = false;
+        if (!claim_attempt_in_flight_.compare_exchange_strong(expected_idle, true)) {
+            Logger::debug("Another chunk claim attempt is in progress");
+            return false;
+        }
+        struct InFlightReset {
+            std::atomic<bool>& flag;
+            ~InFlightReset() { flag.store(false); }
+        } in_flight_reset{claim_attempt_in_flight_};
 
         const auto now = std::chrono::steady_clock::now();
         {
@@ -2637,6 +2789,7 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
             return false;
         }
 
+        work_coordinator_.setChunkSize(chunkSizeForNextClaim());
         auto chunk_opt = work_coordinator_.assignWork(getLocalAlias());
         if (!chunk_opt) {
             Logger::debug("No available chunks to claim");
@@ -2939,6 +3092,7 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
                 Logger::error("Engine is NULL - cannot set search range for chunk: " + chunk_id);
                 return;
             }
+            std::string replaced_own_chunk;
             {
                 // The same approval arrives once per connection (and once
                 // locally); re-applying it reset the engine to the chunk
@@ -2950,10 +3104,16 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
                     Logger::debug("Duplicate approval for current chunk ignored: " + chunk_id);
                     return;
                 }
+                if (!current_chunk_id_.empty() && current_chunk_id_ != chunk_id) {
+                    replaced_own_chunk = current_chunk_id_;
+                    Logger::warn("Own chunk " + replaced_own_chunk + " replaced by newly approved " + chunk_id +
+                                 " before it completed; releasing it");
+                }
                 current_chunk_id_ = chunk_id;
                 current_assigned_start_ = start_key;
                 current_assigned_end_ = end_key;
                 current_chunk_batches_.store(0);
+                noteOwnChunkStartedLocked(start_key, end_key);
                 Logger::info("State updated: current_chunk_id_=" + current_chunk_id_);
             }
             std::string target_address;
@@ -2968,6 +3128,14 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
             range.end = end_key;
             range.target_address = target_address;
             engine_->setSearchRange(range);
+            if (!replaced_own_chunk.empty()) {
+                // The engine left it: hand its range out again now instead of
+                // leaving it assigned to us until the 2 h watchdog, and free
+                // our own claim on it.
+                work_coordinator_.abandonChunk(replaced_own_chunk);
+                std::lock_guard<std::mutex> claim_lk(chunk_claim_mutex_);
+                claims_.releaseClaim(claimKey(replaced_own_chunk, getLocalAlias()), getLocalAlias());
+            }
             Logger::info("Engine search range SET for chunk: " + chunk_id);
             Logger::info("Started working on approved chunk: " + chunk_id + " (" + start_key + " - " + end_key + ")");
         } else {
@@ -3075,7 +3243,30 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
         applyCompletion(claim, verdict == ChunkDoneVerdict::Credit, why);
     }
 
-    void NetworkManager::applyCompletion(const ContributionClaim& claim, bool rewarded, const std::string& why) {
+    void NetworkManager::applyCompletion(const ContributionClaim& claim_in, bool rewarded, const std::string& why) {
+        // The keys a claim may be credited with are bounded by its range:
+        // more than end - start + 1 is clamped to the span (logged), and a
+        // range that does not parse or runs backwards is not applied at all.
+        // The signature covers the claimed keys; clamping only lowers what we
+        // credit and record.
+        ContributionClaim claim = claim_in;
+        const claim_check::Result span_check = claim_check::check(claim.start_key, claim.end_key, claim.keys);
+        if (span_check.verdict == claim_check::Verdict::BadRange) {
+            Logger::warn("CLAIM REJECTED (bad range): chunk=" + claim.chunk_id + " peer=" + claim.peer_id +
+                         " range=" + claim.start_key + "-" + claim.end_key + " keys=" + std::to_string(claim.keys));
+            return;
+        }
+        if (const std::string cap = consensus_v4::checkClaimSize(claim.start_key, claim.end_key); !cap.empty()) {
+            Logger::warn("CLAIM REJECTED (claim cap): chunk=" + claim.chunk_id + " peer=" + claim.peer_id + " range=" +
+                         claim.start_key + "-" + claim.end_key + ": " + cap);
+            return;
+        }
+        if (span_check.verdict == claim_check::Verdict::Clamped) {
+            Logger::warn("CLAIM KEYS CLAMPED: chunk=" + claim.chunk_id + " peer=" + claim.peer_id + " range=" +
+                         claim.start_key + "-" + claim.end_key + " claimed=" + std::to_string(claim.keys) +
+                         " span=" + std::to_string(span_check.span));
+            claim.keys = span_check.keys;
+        }
         // Accept CHUNKDONE for any peer (including ourselves).
         // A completion is (peer, range), not chunk id. Chunk ids are
         // per-node counters: a bare-id check dropped a peer's completion
@@ -3085,6 +3276,9 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
                                                               claim.peer_id, claim.keys, rewarded);
         forgetLeftBehindWithin(claim.start_key, claim.end_key);  // Done, whoever did it
         if (is_new) noteRescanCompletion(claim.peer_id, claim.start_key, claim.end_key);
+        // Verified completions only: an unverified report must not drop a
+        // holder's other claims.
+        if (rewarded) releaseSupersededClaims(claim.peer_id, claim.start_key, claim.end_key);
         noteHolderCompletion(claim.peer_id, claim.start_key, claim.end_key);  // Renews its leases
         Logger::info("CHUNKDONE PROCESSED: chunk=" + claim.chunk_id + " peer=" + claim.peer_id + " range=" +
                      claim.start_key + "-" + claim.end_key + " keys=" + std::to_string(claim.keys) +
@@ -3097,6 +3291,7 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
                 Logger::info("CHUNKDONE VERIFIED LATER: peer=" + claim.peer_id + " keys=" + std::to_string(claim.keys));
                 if (creditCompletionOnce(claim.peer_id, claim.start_key, claim.end_key)) {
                     reward_system_.recordKeys(claim.peer_id, claim.keys, claim.chunks == 0 ? 1 : claim.chunks);
+                    attestCompletion(claim.start_key, claim.end_key, claim.keys, claim.peer_id);
                 }
                 markPeerContribution(claim.peer_id);
                 return;
@@ -3134,6 +3329,7 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
             Logger::info("CHUNKDONE RECORDED KEYS: peer=" + claim.peer_id + " keys=" + std::to_string(claim.keys));
             reward_system_.recordKeys(claim.peer_id, claim.keys, claim.chunks == 0 ? 1 : claim.chunks);
             markPeerContribution(claim.peer_id);
+            attestCompletion(claim.start_key, claim.end_key, claim.keys, claim.peer_id);
         }
     }
 
@@ -3150,6 +3346,21 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
             // peer_auth=off: the pre-auth rules, unchanged (signed claims under
             // any key, and the unsigned legacy "alias|keys|chunks" form).
             if (signed_ok) {
+                const claim_check::Result span_check = claim_check::check(claim.start_key, claim.end_key, claim.keys);
+                if (span_check.verdict == claim_check::Verdict::BadRange) {
+                    Logger::warn("CONTRIB REJECTED (bad range) from " + peer_alias + ": peer=" + claim.peer_id +
+                                 " range=" + claim.start_key + "-" + claim.end_key);
+                    return;
+                }
+                if (const std::string cap = consensus_v4::checkClaimSize(claim.start_key, claim.end_key); !cap.empty()) {
+                    Logger::warn("CONTRIB REJECTED (claim cap) from " + peer_alias + ": peer=" + claim.peer_id + ": " + cap);
+                    return;
+                }
+                if (span_check.verdict == claim_check::Verdict::Clamped) {
+                    Logger::warn("CONTRIB KEYS CLAMPED from " + peer_alias + ": peer=" + claim.peer_id + " claimed=" +
+                                 std::to_string(claim.keys) + " span=" + std::to_string(span_check.span));
+                    claim.keys = span_check.keys;
+                }
                 if (claim.keys > 0) {
                     Logger::info("CONTRIB RECEIVED & RECORDED: peer=" + claim.peer_id + " keys=" + std::to_string(claim.keys));
                     reward_system_.recordKeys(claim.peer_id, claim.keys, claim.chunks == 0 ? 1 : claim.chunks);
@@ -3270,6 +3481,30 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
         claims_.noteHolderCompletion(holder, start_key, end_key, now);
     }
 
+    size_t NetworkManager::releaseSupersededClaims(const std::string& holder, const std::string& start_key,
+                                                   const std::string& end_key) {
+        if (holder.empty() || holder == getLocalAlias()) return 0;
+        std::vector<ClaimLease> superseded;
+        {
+            std::lock_guard<std::mutex> lk(chunk_claim_mutex_);
+            superseded = claims_.takeSupersededLeases(holder, start_key, end_key);
+        }
+        for (const auto& l : superseded) {
+            Logger::warn("Claim " + l.chunk_id + " of " + l.holder + " (" + l.start_key + "-" + l.end_key +
+                         ") superseded: it completed a later claim; handing the range out again");
+            if (work_coordinator_.isRangeRetired(l.start_key, l.end_key)) continue;
+            work_coordinator_.releaseReservedRange(l.start_key, l.end_key, l.holder);
+            reclaimLeftBehind(
+                [&](const LeftBehindRange& r) {
+                    return r.holder == l.holder && HexMath::compare(r.start, l.start_key) >= 0 &&
+                           HexMath::compare(r.end, l.end_key) <= 0;
+                },
+                "claim of " + l.holder + " superseded");
+        }
+        if (!superseded.empty()) wakeClaimRetry();
+        return superseded.size();
+    }
+
     uint64_t NetworkManager::claimLeaseSecondsLocked(const ClaimLease& lease) const {
         return claims_.leaseSeconds(lease, config_.network.claim_lease_min_s,
                                     config_.network.claim_lease_factor);
@@ -3303,11 +3538,14 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
         return expired.size();
     }
 
-    std::string NetworkManager::deriveLocalAlias(const std::string& node_uuid, const std::string& reward_address) {
-        // uuid (dashes removed, first 12 chars) > reward address (first 10) > "Anonymous".
+    std::string NetworkManager::deriveLocalAlias(const std::string& node_uuid, const std::string& reward_address,
+                                                 const std::string& key_alias) {
+        // uuid (dashes removed, first 12 chars) > node-key alias >
+        // reward address (first 10) > "Anonymous".
         std::string uuid_alias = node_uuid;
         uuid_alias.erase(std::remove(uuid_alias.begin(), uuid_alias.end(), '-'), uuid_alias.end());
         if (!uuid_alias.empty()) return uuid_alias.substr(0, std::min<size_t>(12, uuid_alias.size()));
+        if (!key_alias.empty()) return key_alias;
         if (!reward_address.empty()) return reward_address.substr(0, std::min<size_t>(10, reward_address.size()));
         return "Anonymous";
     }
@@ -3338,6 +3576,12 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
         // dialled) going away is not the node going away; keep its claims,
         // reservations and keyspace entry while another connection remains.
         if (alias.empty()) return;
+        if (alias == getLocalAlias()) {
+            // A link to ourselves went away, not a peer: our own claims and
+            // assignments stay.
+            Logger::info("Lost a link to our own alias " + alias + "; keeping our claims");
+            return;
+        }
         if (aliasStillConnected(alias)) {
             Logger::info("Peer " + alias + " still connected on another link; keeping its claims");
             return;
@@ -3387,10 +3631,10 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
                 reclaimLeftBehind([&](const LeftBehindRange& r) { return r.holder == proposer && r.start == es && r.end == ee; },
                                   "claim of " + proposer + " expired");
             }
-            // Also ensure claimed set does not contain it
+            // Also ensure claimed set does not contain it (with its slot)
             {
                 std::lock_guard<std::mutex> lk(chunk_claim_mutex_);
-                claims_.claimed.erase(std::get<3>(t));
+                claims_.releaseClaim(std::get<3>(t), proposer);
             }
         }
     }
@@ -3487,7 +3731,7 @@ void NetworkManager::handleKeyClaimChallenge(const std::string& peer_alias, cons
     }
 
     // Diagnostic: log parsed commit payload for further inspection
-    Logger::debug(std::string("handleCommitMessage raw payload from ") + peer_alias + ": '" + payload + "'");
+    Logger::debug(std::string("handleCommitMessage raw payload from ") + peer_alias + ": '" + Logger::snippet(payload) + "'");
 
     // Persist commit to pending map keyed by start|end
     std::string range_key = c.range_start + "|" + c.range_end;
@@ -3811,6 +4055,12 @@ ConsensusEngine::Block NetworkManager::deserializeBlock(const std::string& paylo
 
     for (size_t i = 1; i < segments.size(); ++i) {
         if (segments[i].empty()) continue;
+        if (segments[i].rfind("@A|", 0) == 0) {
+            auto t = splitKeepEmpty(segments[i], '|');
+            if (t.size() == 4 && !block.commitments.empty() && block.commitments.back().attestations.size() < 64)
+                block.commitments.back().attestations.push_back({t[1], t[2], t[3]});
+            continue;
+        }
         auto tokens = splitKeepEmpty(segments[i], ',');
         if (tokens.size() != 5) {
             continue;
@@ -3834,6 +4084,10 @@ std::string NetworkManager::serializeBlock(const ConsensusEngine::Block& block) 
     for (const auto& c : block.commitments) {
         oss << ";" << c.chunk_id << "," << c.start_key << "," << c.end_key << ","
             << c.keys << "," << c.miner_id;
+        // v4 attestations: one "@A|alias|pubkey|sig" segment each after its
+        // commitment. No commas, so older parsers skip them (a commitment
+        // segment has exactly 5 comma-separated fields).
+        for (const auto& a : c.attestations) oss << ";@A|" << a.alias << "|" << a.pubkey << "|" << a.sig;
     }
     return oss.str();
 }
@@ -3939,7 +4193,7 @@ void NetworkManager::handleInventory(const std::string& peer_alias, const std::v
 }
 
 void NetworkManager::handleGetBlocks(const std::string& peer_alias, const std::vector<std::string>& locators) {
-    auto headers = consensus_engine_.getHeadersFrom(locators, kSyncHeadersBatch);
+    auto headers = consensus_engine_.getHeadersFrom(locators, sync_headers_serve_);
     if (headers.empty()) return;
 
     std::ostringstream oss;
@@ -3958,7 +4212,7 @@ void NetworkManager::handleHeaders(const std::string& peer_alias, const std::vec
     if (headers.empty()) return;
 
     // Request the blocks we lack, then keep paging. A HEADERS reply
-    // carries at most kSyncHeadersBatch headers (also on older nodes), and
+    // carries up to kSyncHeadersServe headers (64 from older nodes), and
     // nothing used to ask for the next page, so a node more than one page
     // behind never caught up.
     std::vector<std::string> unknown_hashes;
@@ -4004,19 +4258,32 @@ void NetworkManager::handleHeaders(const std::string& peer_alias, const std::vec
 
 void NetworkManager::handleGetData(const std::string& peer_alias, const std::vector<std::string>& hashes) {
     if (hashes.empty()) return;
+    for (const auto& batch : getDataReplyBatches(hashes)) sendToPeer(peer_alias, batch);
+}
 
-    // One send() for the whole reply (the same BLOCK lines, newline
-    // separated). One small send per block ran into Nagle + delayed ACK, about
-    // 40 ms per block, so a 500-block catch-up took over a minute.
+std::vector<std::string> NetworkManager::getDataReplyBatches(const std::vector<std::string>& hashes) const {
+    // Several BLOCK lines per send() (newline separated): one small send per
+    // block ran into Nagle + delayed ACK, about 40 ms per block. At most
+    // kGetDataReplyBlocks lines per send: a whole 512-block page in one send
+    // (~260 KB) could exceed the bounded send wait on a slow link and be cut
+    // off mid-line.
     MessageHandler handler;
+    std::vector<std::string> batches;
     std::string batch;
+    size_t in_batch = 0;
     for (const auto& hash : hashes) {
         auto block_opt = consensus_engine_.getBlock(normalizeHash(hash));
         if (!block_opt.has_value()) continue;
         if (!batch.empty()) batch += '\n';
         batch += handler.makeMessage(MessageVerb::Block, serializeBlock(block_opt.value()));
+        if (++in_batch == kGetDataReplyBlocks) {
+            batches.push_back(std::move(batch));
+            batch.clear();
+            in_batch = 0;
+        }
     }
-    if (!batch.empty()) sendToPeer(peer_alias, batch);
+    if (!batch.empty()) batches.push_back(std::move(batch));
+    return batches;
 }
 
 void NetworkManager::handleBlock(const std::string& peer_alias, const ConsensusEngine::Block& block) {
@@ -4050,6 +4317,10 @@ void NetworkManager::handleBlock(const std::string& peer_alias, const ConsensusE
 
         // Relay inventory once a sync batch has fully arrived (not per block).
         if (sync_idle) {
+            if (chain_store_) {
+                chain_store_->flushMeta();  // batched during the sync
+                refreshChainstoreCheckpoint(nullptr, /*force=*/false);
+            }
             auto inventory = consensus_engine_.getInventory(32);
             if (!inventory.empty()) {
                 MessageHandler handler;
@@ -4085,6 +4356,12 @@ void NetworkManager::handleBlock(const std::string& peer_alias, const ConsensusE
             MessageHandler handler;
             sendToPeer(peer_alias, handler.makeMessage(MessageVerb::GetBlocks, blockLocatorPayload()));
         }
+    } else if (error.rfind("v4:", 0) == 0) {
+        // Valid for older nodes (relayed in good faith, or stripped of its
+        // attestations by an older relay): no strike.
+        Logger::info("Block from " + peer_alias + " not added: " + error);
+        std::lock_guard<std::mutex> lock(consensus_mutex_);
+        requested_blocks_.erase(hash);
     } else {
         Logger::warn("Rejected block from " + peer_alias + ": " + error);
         recordPeerStrike(peer_alias, "invalid block: " + error);
@@ -4182,6 +4459,7 @@ void NetworkManager::onSyncedBlockAccepted(const ConsensusEngine::Block& block, 
         kc.range_end = c.end_key;
         kc.keys_processed = c.keys;
         kc.peer_id = c.miner_id;
+        kc.attestations = c.attestations;
         kb.commitments.push_back(kc);
     }
     ConsensusEngine::Block check;
@@ -4322,6 +4600,9 @@ void NetworkManager::mintAndStoreKeyspaceBlock(const std::string& start_key,
 }
 
 void NetworkManager::assembleQualifiedBlocks() {
+    // Under v4 a block needs attestations, which this path (COMMIT quorum
+    // of senders) does not collect; v4 blocks are minted by their miner.
+    if (v4ActiveForNextBlock()) return;
     // Quorum-qualified commitments become blocks. A block must hold one
     // sorted, contiguous run of commitments (ConsensusEngine validation), but
     // qualified ranges are scattered (random chunks) and the pending map is
@@ -4579,6 +4860,17 @@ void NetworkManager::completeCurrentChunk() {
 
     Logger::info("ONWORKDEPLETED: chunk=" + chunk_id + " keys=" + std::to_string(keys_checked));
 
+    if (!already_completed && keys_checked > 0) {
+        // Chunk sizing: this node's rate over the chunk it just finished,
+        // from the engine start to the work-depleted signal.
+        std::lock_guard<std::mutex> lk(state_mutex_);
+        if (own_chunk_timed_ == start_key + "|" + end_key) {
+            const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - own_chunk_started_).count();
+            if (secs > 0.0) measured_rate_ = static_cast<double>(keys_checked) / secs;
+            own_chunk_timed_.clear();
+        }
+    }
+
     ensureContributionIdentity();
 
     ContributionClaim signed_claim;
@@ -4642,7 +4934,13 @@ void NetworkManager::completeCurrentChunk() {
         }
 
         if (!already_completed) {
-            mintAndStoreKeyspaceBlock(start_key, end_key, keys_checked, getLocalAlias());
+            if (v4ActiveForNextBlock()) {
+                // v4: the block needs another node's attestation; minted
+                // once it arrives (COMMITATT), see queueOwnCommitment.
+                queueOwnCommitment(start_key, end_key, keys_checked);
+            } else {
+                mintAndStoreKeyspaceBlock(start_key, end_key, keys_checked, getLocalAlias());
+            }
         }
     }
 
@@ -4799,6 +5097,7 @@ bool NetworkManager::assignLocalChunkNonCoordinator() {
         current_assigned_start_ = chunk.start_key;
         current_assigned_end_ = chunk.end_key;
         current_chunk_batches_.store(0);  // Reset batch counter for new chunk
+        noteOwnChunkStartedLocked(chunk.start_key, chunk.end_key);
     }
     if (engine_) {
         KeyRange range;
@@ -4942,6 +5241,16 @@ void NetworkManager::rehydrateWorkFromState(const std::string& target_address,
             }
         }
 
+        {
+            // Ledger entries (also ones written by older builds) are credited
+            // at most their range's span, like a claim arriving now.
+            const claim_check::Result span_check = claim_check::check(e.start, e.end, keys);
+            if (span_check.verdict == claim_check::Verdict::Clamped) {
+                Logger::warn("LEDGER KEYS CLAMPED: peer=" + e.peer + " range=" + e.start + "-" + e.end +
+                             " recorded=" + std::to_string(keys) + " span=" + std::to_string(span_check.span));
+                keys = span_check.keys;
+            }
+        }
         work_coordinator_.markCompletedFromState(e.id, e.start, e.end, keys);
         // Unverified completions count for scheduling only.
         // And each completion is credited once per process, however
@@ -5619,8 +5928,12 @@ void NetworkManager::onKeyFound(const std::string& private_key, const std::strin
             return;
         }
         
-        // Compute proportional payouts
-        auto outputs = computeProportionalPayouts(balance, finder_address, config_.finder_reward_pct);
+        // Compute proportional payouts (the chain-derived pool, as peers check it)
+        std::vector<RewardSystem::PeerContribution> pool;
+        uint64_t pool_keys = 0;
+        payoutPoolFor(puzzle, pool, pool_keys);
+        auto outputs = computeProportionalPayouts(balance, finder_address, config_.finder_reward_pct, &pool, pool_keys,
+                                                  finder_peer);
         
         if (outputs.empty()) {
             Logger::error("Failed to compute proportional payouts");
@@ -5672,8 +5985,7 @@ void NetworkManager::onKeyFound(const std::string& private_key, const std::strin
     p.finder_address = finder_address;
     p.finder_peer = finder_peer;
     p.has_contributions = true;  // the pool as it is now, before the search moves on
-    p.contributions = reward_system_.getContributions();
-    p.total_keys = reward_system_.getTotalKeysChecked();
+    payoutPoolFor(puzzle, p.contributions, p.total_keys);
     puzzle_manager_->markPuzzleSolved(p.puzzle, std::string(), finder_address);
 
     const bool done = runPayoutStep(p, /*first_attempt=*/true);
@@ -5787,8 +6099,9 @@ bool NetworkManager::runPayoutStep(PendingPayout& p, bool first_attempt) {
         }
         auto outputs = p.has_contributions
                            ? computeProportionalPayouts(balance, p.finder_address, config_.finder_reward_pct,
-                                                        &p.contributions, p.total_keys)
-                           : computeProportionalPayouts(balance, p.finder_address, config_.finder_reward_pct);
+                                                        &p.contributions, p.total_keys, p.finder_peer)
+                           : computeProportionalPayouts(balance, p.finder_address, config_.finder_reward_pct,
+                                                        p.finder_peer);
         if (outputs.empty()) {
             Logger::error(what + ": failed to compute proportional payouts; will retry");
             return false;
@@ -6131,12 +6444,17 @@ bool NetworkManager::applyPayoutNotice(const std::vector<PayoutOutput>& outputs,
     if (!puzzle_manager_->getPuzzle(puzzle_number, puzzle)) puzzle = puzzle_manager_->getCurrentPuzzle();
     std::string solver_alias;
     std::string solver_address;
+    bool solver_matches = false;
     {
         std::lock_guard<std::mutex> lk(state_mutex_);
         solver_alias = last_solver_alias_;
         solver_address = last_solver_address_;
+        solver_matches = last_solver_puzzle_ == puzzle.number;
     }
     if (solver_alias.empty()) solver_alias = local ? getLocalAlias() : from_alias;
+    if (!local)
+        (void)checkPayoutAgainstChain(outputs, puzzle.number, solver_matches ? solver_alias : from_alias,
+                                      solver_matches ? solver_address : std::string(), from_alias);
 
     Logger::info(std::string(local ? "MPC payout finished here" : "PAYOUT received") + " for puzzle " +
                  std::to_string(puzzle.number) + " outputs=" + std::to_string(outputs.size()));
@@ -6228,7 +6546,7 @@ void NetworkManager::setRewardAddress(const std::string& address) {
         // configured. It used to be overwritten with the address prefix
         // unconditionally, so the uuid never named the node and two nodes
         // sharing one payout address got the same alias.
-        new_alias = deriveLocalAlias(config_.network.node_uuid, address);
+        new_alias = deriveLocalAlias(config_.network.node_uuid, address, key_alias_);
         std::lock_guard<std::mutex> alk(alias_mutex_);
         old_alias = local_alias_;
         local_alias_ = new_alias;
@@ -6410,16 +6728,56 @@ bool NetworkManager::tryPopPuzzleSolvedEvent(PuzzleSolvedEvent& evt) {
 void NetworkManager::pushPuzzleSolvedEvent(const PuzzleSolvedEvent& evt) {
     std::lock_guard<std::mutex> lk(puzzle_event_mutex_);
     puzzle_solved_events_.push_back(evt);
+    while (puzzle_solved_events_.size() > kMaxSolvedEvents) puzzle_solved_events_.pop_front();
+    recent_solved_events_.push_back(evt);
+    recent_solved_events_.back().private_key.clear();
+    while (recent_solved_events_.size() > kMaxSolvedEvents) recent_solved_events_.pop_front();
+}
+
+std::vector<PuzzleSolvedEvent> NetworkManager::recentPuzzleSolvedEvents() const {
+    std::lock_guard<std::mutex> lk(puzzle_event_mutex_);
+    return {recent_solved_events_.begin(), recent_solved_events_.end()};
 }
 
 // Reward distribution helpers
+namespace {
+// floor(a * b / c) without overflow (c > 0, b <= c): 32-bit halves, no
+// __int128 (MSVC).
+uint64_t mulDivFloor(uint64_t a, uint64_t b, uint64_t c) {
+    // a = q*c + r, so a*b/c = q*b + r*b/c, with r < c. r*b can still
+    // overflow, so long division on r*b in base 2^32.
+    const uint64_t q = a / c, r = a % c;
+    uint64_t result = q * b;
+    // r * b as a 128-bit (hi, lo) pair.
+    const uint64_t r_lo = r & 0xFFFFFFFFull, r_hi = r >> 32, b_lo = b & 0xFFFFFFFFull, b_hi = b >> 32;
+    const uint64_t ll = r_lo * b_lo, lh = r_lo * b_hi, hl = r_hi * b_lo, hh = r_hi * b_hi;
+    const uint64_t mid = (ll >> 32) + (lh & 0xFFFFFFFFull) + (hl & 0xFFFFFFFFull);
+    uint64_t lo = (ll & 0xFFFFFFFFull) | (mid << 32);
+    uint64_t hi = hh + (lh >> 32) + (hl >> 32) + (mid >> 32);
+    // (hi, lo) / c by shift-subtract (hi < c since r < c).
+    uint64_t quot = 0;
+    for (int i = 0; i < 64; ++i) {
+        const bool carry = (hi >> 63) != 0;
+        hi = (hi << 1) | (lo >> 63);
+        lo <<= 1;
+        quot <<= 1;
+        if (carry || hi >= c) {
+            hi -= c;
+            quot |= 1;
+        }
+    }
+    return result + quot;
+}
+}  // namespace
+
 std::vector<PayoutOutput> NetworkManager::computeProportionalPayouts(
     uint64_t total_balance,
     const std::string& finder_address,
-    double finder_pct) {
+    double finder_pct,
+    const std::string& finder_peer) {
     const auto contributions = reward_system_.getContributions();
     return computeProportionalPayouts(total_balance, finder_address, finder_pct, &contributions,
-                                      reward_system_.getTotalKeysChecked());
+                                      reward_system_.getTotalKeysChecked(), finder_peer);
 }
 
 // From a snapshot of the pool (a retried payout uses the pool as it
@@ -6429,7 +6787,8 @@ std::vector<PayoutOutput> NetworkManager::computeProportionalPayouts(
     const std::string& finder_address,
     double finder_pct,
     const std::vector<RewardSystem::PeerContribution>* contributions_in,
-    uint64_t total_keys) {
+    uint64_t total_keys,
+    const std::string& finder_peer) {
     
     std::vector<PayoutOutput> outputs;
     
@@ -6439,9 +6798,10 @@ std::vector<PayoutOutput> NetworkManager::computeProportionalPayouts(
     }
     
     // Validate percentages
-    if (finder_pct < 0.0 || finder_pct > 1.0) {
-        Logger::warn("computeProportionalPayouts: invalid finder_pct " + std::to_string(finder_pct));
-        finder_pct = 0.1; // Default 10% to finder
+    if (!(finder_pct >= 0.0 && finder_pct <= 1.0)) {
+        Logger::warn("computeProportionalPayouts: invalid finder_pct " + std::to_string(finder_pct) +
+                     "; using the default " + std::to_string(kDefaultFinderRewardPct));
+        finder_pct = effectiveFinderRewardPct(finder_pct);  // 90% to the finder
     }
     
     uint64_t finder_amount = static_cast<uint64_t>(total_balance * finder_pct);
@@ -6477,30 +6837,43 @@ std::vector<PayoutOutput> NetworkManager::computeProportionalPayouts(
         Logger::info("REWARD: " + std::to_string(rest) + " sats not distributed to the pool go to the finder");
     };
 
-    if (total_keys == 0) {
-        Logger::warn("REWARD: No contributions recorded, cannot distribute pool");
+    // The finder takes no pool share: its node, and any contributor paid to
+    // the finder's reward address (the same owner), are left out, and so are
+    // their keys. The check used to look for the finder's address inside the
+    // peer id, which never matched, so the finder also took a pool share.
+    auto is_finder = [&](const RewardSystem::PeerContribution& c) {
+        return (!finder_peer.empty() && c.peer_id == finder_peer) ||
+               (!finder_address.empty() && c.reward_address == finder_address);
+    };
+    uint64_t finder_keys = 0;
+    for (const auto& contrib : contributions)
+        if (is_finder(contrib)) finder_keys += contrib.keys_checked;
+    const uint64_t split_keys = total_keys > finder_keys ? total_keys - finder_keys : 0;
+
+    if (split_keys == 0) {
+        Logger::warn(total_keys == 0 ? "REWARD: No contributions recorded, cannot distribute pool"
+                                     : "REWARD: Only the finder contributed; the pool goes to the finder");
         give_rest_to_finder();
         return outputs;
     }
     
-    Logger::info("REWARD: Distributing pool " + std::to_string(pool_amount) + " sats among " +
-               std::to_string(contributions.size()) + " contributors (total keys: " + 
+    Logger::info("REWARD: Distributing pool " + std::to_string(pool_amount) + " sats among the " +
+               "contributors other than the finder (keys: " + std::to_string(split_keys) + " of " +
                std::to_string(total_keys) + ")");
     
     for (const auto& contrib : contributions) {
-        // Skip finder from pool (already received finder reward)
-        if (contrib.peer_id.find(finder_address) != std::string::npos) {
-            continue;
-        }
+        if (is_finder(contrib)) continue;  // already has the finder reward
         
         if (contrib.reward_address.empty() || !bitcoin_wallet_->isValidAddress(contrib.reward_address)) {
             Logger::debug("REWARD: Peer " + contrib.peer_id + " has no valid reward address");
             continue;
         }
         
-        // Proportional share = peer_keys / total_keys
-        double peer_share = static_cast<double>(contrib.keys_checked) / total_keys;
-        uint64_t peer_amount = static_cast<uint64_t>(pool_amount * peer_share);
+        // Proportional share = peer_keys / keys of everyone but the finder.
+        // Integer math (floor), so the outputs never exceed the pool; the
+        // rounding remainder goes to the finder.
+        double peer_share = static_cast<double>(contrib.keys_checked) / static_cast<double>(split_keys);
+        uint64_t peer_amount = mulDivFloor(pool_amount, contrib.keys_checked, split_keys);
         
         if (peer_amount > 0) {
             outputs.push_back({contrib.reward_address, peer_amount, peer_share * (1.0 - finder_pct), 
@@ -6514,6 +6887,132 @@ std::vector<PayoutOutput> NetworkManager::computeProportionalPayouts(
 
     give_rest_to_finder();
     return outputs;
+}
+
+NetworkManager::ChainSplitView NetworkManager::chainSplitFor(const std::string& range_start,
+                                                            const std::string& range_end) const {
+    ChainSplitView v;
+    std::vector<chain_split::Commitment> in;
+    for (const auto& c : consensus_engine_.bestChainCommitments()) in.push_back({c.start_key, c.end_key, c.keys, c.miner_id});
+    v.raw = chain_split::compute(range_start, range_end, in, chainSplitClaimCap());
+    const auto book = reward_system_.rewardAddressBook();
+    auto resolve = [&](const std::string& miner) -> std::string {
+        auto it = book.find(miner);
+        if (it != book.end() && !it->second.empty()) return it->second;
+        // Older builds used the first 10 characters of the reward address
+        // as alias: the one known address with that prefix, if unique.
+        if (miner.size() == 10) {
+            std::string found;
+            for (const auto& kv : book) {
+                if (kv.second.compare(0, miner.size(), miner) != 0) continue;
+                if (!found.empty() && found != kv.second) return std::string();  // ambiguous
+                found = kv.second;
+            }
+            return found;
+        }
+        return std::string();
+    };
+    for (const auto& m : v.raw.miners) {
+        RewardSystem::PeerContribution c{};
+        c.peer_id = m.miner_id;
+        c.reward_address = resolve(m.miner_id);
+        c.keys_checked = m.keys;
+        c.chunks_completed = m.commitments;
+        c.share_percentage = v.raw.total_keys ? 100.0 * static_cast<double>(m.keys) / static_cast<double>(v.raw.total_keys) : 0.0;
+        v.contributions.push_back(c);
+    }
+    v.total_keys = v.raw.total_keys;
+    return v;
+}
+
+uint64_t NetworkManager::chainSplitClaimCap() const { return consensus_v4::kMaxClaimKeys; }  // at any height
+
+std::vector<NetworkManager::PayoutCheck> NetworkManager::getPayoutChecks() const {
+    std::lock_guard<std::mutex> lk(payout_checks_mutex_);
+    return payout_checks_;
+}
+
+NetworkManager::PayoutCheck NetworkManager::checkPayoutAgainstChain(const std::vector<PayoutOutput>& outputs,
+                                                                    uint32_t puzzle_number,
+                                                                    const std::string& finder_alias,
+                                                                    const std::string& finder_address_in,
+                                                                    const std::string& from_alias) {
+    PayoutCheck chk;
+    chk.puzzle = puzzle_number;
+    chk.from_alias = from_alias;
+    chk.finder = finder_alias.empty() ? from_alias : finder_alias;
+    std::map<std::string, uint64_t> got;
+    uint64_t total = 0;
+    for (const auto& o : outputs) {
+        got[o.address] += o.amount_satoshis;
+        total += o.amount_satoshis;
+    }
+    chk.announced_total = total;
+    chk.finder_address = finder_address_in;
+    if (chk.finder_address.empty()) {
+        // Unknown solver address: the largest output (90% of the prize).
+        uint64_t best = 0;
+        for (const auto& kv : got)
+            if (kv.second > best) { best = kv.second; chk.finder_address = kv.first; }
+    }
+    PuzzleInfo info;
+    const bool have_puzzle = puzzle_manager_ && puzzle_manager_->getPuzzle(puzzle_number, info);
+    const ChainSplitView split = have_puzzle ? chainSplitFor(info.range_start, info.range_end) : ChainSplitView{};
+    if (!have_puzzle || split.total_keys == 0 || total == 0) {
+        chk.checked = false;
+        chk.note = !have_puzzle ? "unknown puzzle" : (total == 0 ? "empty payout" : "no chain commitments for this puzzle");
+        Logger::info("PAYOUT CHECK puzzle " + std::to_string(puzzle_number) + " from " + from_alias + ": not checked (" +
+                     chk.note + ")");
+    } else {
+        chk.checked = true;
+        const auto expected = computeProportionalPayouts(total, chk.finder_address, effectiveFinderRewardPct(config_.finder_reward_pct),
+                                                         &split.contributions, split.total_keys, chk.finder);
+        std::map<std::string, uint64_t> want;
+        for (const auto& o : expected) want[o.address] += o.amount_satoshis;
+        constexpr uint64_t kDustFloor = 546;  // the wallet drops outputs below dust (they join the finder's)
+        for (const auto& kv : want) {
+            if (kv.first == chk.finder_address || kv.second < kDustFloor) continue;
+            const uint64_t tol = std::max<uint64_t>(600, kv.second / 200);
+            const uint64_t g = got.count(kv.first) ? got[kv.first] : 0;
+            if (g + tol < kv.second) chk.mismatches.push_back({kv.first, kv.second, g});
+        }
+        chk.ok = chk.mismatches.empty();
+        if (chk.ok) {
+            Logger::info("PAYOUT CHECK puzzle " + std::to_string(puzzle_number) + " from " + from_alias +
+                         ": matches the chain split (" + std::to_string(split.contributions.size()) + " miners, " +
+                         std::to_string(split.total_keys) + " keys)");
+        } else {
+            for (const auto& m : chk.mismatches)
+                Logger::warn("PAYOUT CHECK MISMATCH puzzle " + std::to_string(puzzle_number) + ": finder " + chk.finder +
+                             " paid " + m.address + " " + std::to_string(m.got) + " sats; the chain split gives " +
+                             std::to_string(m.expected) + " sats (flagged locally)");
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lk(payout_checks_mutex_);
+        payout_checks_.push_back(chk);
+        if (payout_checks_.size() > kMaxPayoutChecks) payout_checks_.erase(payout_checks_.begin());
+    }
+    return chk;
+}
+
+void NetworkManager::payoutPoolFor(const PuzzleInfo& puzzle, std::vector<RewardSystem::PeerContribution>& pool,
+                                   uint64_t& total_keys) const {
+    // The payout pool is the best-chain split, so every node computes the
+    // same one and peers can check the PAYOUT. Only if the chain has no
+    // commitments for this puzzle (e.g. not synced) the local ledger is used.
+    const ChainSplitView split = chainSplitFor(puzzle.range_start, puzzle.range_end);
+    if (split.total_keys > 0) {
+        pool = split.contributions;
+        total_keys = split.total_keys;
+        Logger::info("REWARD: payout pool from the best chain: " + std::to_string(pool.size()) + " miners, " +
+                     std::to_string(total_keys) + " keys");
+        return;
+    }
+    pool = reward_system_.getContributions();
+    total_keys = reward_system_.getTotalKeysChecked();
+    Logger::warn("REWARD: the best chain has no commitments for puzzle " + std::to_string(puzzle.number) +
+                 "; payout pool from the local ledger (" + std::to_string(total_keys) + " keys)");
 }
 
 std::string NetworkManager::createPsbtFromPayouts(const std::string& puzzle_address,
@@ -6637,3 +7136,189 @@ void NetworkManager::requestStateSync(const std::string& peer_alias) {
 
 
 
+
+// ---------------------------------------------------------------------------
+// Consensus v4 commit quorum (ConsensusRules.h).
+//
+//   COMMITATT:{"range_start","range_end","keys","miner","alias","pubkey","sig"}
+//
+// A v4 node that credits another node's completion (signed by its bound key,
+// span- and cap-checked) signs an attestation and broadcasts it; nodes relay
+// each new valid attestation once. The miner collects them for its own
+// completions and mints its block once kMinAttestations distinct other nodes
+// have vouched (the block carries them; v4 nodes reject a block without).
+// Older nodes ignore the verb. Sent only while v4 applies to the next block.
+
+bool NetworkManager::v4ActiveForNextBlock() const {
+    const auto snap = consensus_engine_.getChainSnapshot();
+    return snap.initialized && consensus_v4::activeAt(consensus_engine_.v4ActivationHeight(), snap.height + 1);
+}
+
+std::string NetworkManager::ownCommitmentKey(const std::string& start, const std::string& end, uint64_t keys) {
+    return HexMath::normalizeFiltered(start) + "|" + HexMath::normalizeFiltered(end) + "|" + std::to_string(keys);
+}
+
+bool NetworkManager::rememberAttestation(const std::string& sig) {
+    std::lock_guard<std::mutex> lk(own_commit_mutex_);
+    if (!seen_attestations_.insert(sig).second) return false;
+    seen_attestation_order_.push_back(sig);
+    while (seen_attestation_order_.size() > 4096) {
+        seen_attestations_.erase(seen_attestation_order_.front());
+        seen_attestation_order_.pop_front();
+    }
+    return true;
+}
+
+void NetworkManager::attestCompletion(const std::string& start, const std::string& end, uint64_t keys,
+                                      const std::string& miner) {
+    if (miner.empty() || miner == getLocalAlias() || keys == 0) return;
+    {
+        // Attest from a little before the activation height on, so a miner
+        // whose tip is ahead of ours still gets its attestations (an early
+        // one is harmless: older blocks don't need it).
+        const auto snap = consensus_engine_.getChainSnapshot();
+        const uint64_t act = consensus_engine_.v4ActivationHeight();
+        if (!snap.initialized || act == 0 || snap.height + 1 + kV4AttestLead < act) return;
+    }
+    if (!consensus_v4::checkClaimSize(start, end).empty()) return;
+    ensureContributionIdentity();
+    std::string pubkey, priv;
+    {
+        std::lock_guard<std::mutex> lk(contribution_mutex_);
+        pubkey = contribution_pubkey_hex_;
+        priv = contribution_privkey_hex_;
+    }
+    if (pubkey.empty() || priv.empty()) return;
+    EllipticCurve ec;
+    const std::string sig = ec.signDigestHex(priv, consensus_v4::attestationDigest(start, end, keys, miner));
+    if (sig.empty()) return;
+    (void)rememberAttestation(sig);
+    nlohmann::json j = {{"range_start", start}, {"range_end", end}, {"keys", keys}, {"miner", miner},
+                        {"alias", getLocalAlias()}, {"pubkey", pubkey}, {"sig", sig}};
+    MessageHandler handler;
+    broadcastMessage(handler.makeMessage(MessageVerb::CommitAttestation, j.dump()));
+    attestations_sent_.fetch_add(1);
+    Logger::debug("COMMITATT sent for " + miner + " " + start + "-" + end);
+}
+
+void NetworkManager::handleCommitAttestation(const std::string& peer_alias, const std::string& payload,
+                                             uint64_t sender_peer_id) {
+    std::string start, end, miner;
+    uint64_t keys = 0;
+    CommitAttestation a;
+    try {
+        const auto j = nlohmann::json::parse(payload);
+        start = j.at("range_start").get<std::string>();
+        end = j.at("range_end").get<std::string>();
+        keys = j.at("keys").get<uint64_t>();
+        miner = j.at("miner").get<std::string>();
+        a.alias = j.at("alias").get<std::string>();
+        a.pubkey = node_identity::normalizePubkeyHex(j.at("pubkey").get<std::string>());
+        a.sig = j.at("sig").get<std::string>();
+    } catch (const std::exception& ex) {
+        Logger::debug("Malformed COMMITATT from " + peer_alias + ": " + ex.what());
+        return;
+    }
+    if (a.alias.find_first_of("|;,") != std::string::npos || a.sig.find_first_of("|;,") != std::string::npos) return;
+    if (!consensus_v4::verifyAttestation(a, start, end, keys, miner)) {
+        Logger::debug("COMMITATT from " + peer_alias + " does not verify; ignored");
+        return;
+    }
+    if (!rememberAttestation(a.sig)) return;  // seen
+    // Relay once, so a miner not connected to the attester gets it too.
+    MessageHandler handler;
+    broadcastMessageExcept(sender_peer_id, handler.makeMessage(MessageVerb::CommitAttestation, payload));
+    if (miner != getLocalAlias()) return;
+    const std::string key = ownCommitmentKey(start, end, keys);
+    {
+        std::lock_guard<std::mutex> lk(own_commit_mutex_);
+        auto it = own_commitments_.find(key);
+        if (it == own_commitments_.end()) {
+            // Before our own queueOwnCommitment (or for a completion we
+            // already minted): keep a few, briefly.
+            if (early_attestations_.size() < 256) early_attestations_[key][a.pubkey] = a;
+            return;
+        }
+        it->second.atts[a.pubkey] = a;
+    }
+    tryMintOwnCommitment(key);
+}
+
+void NetworkManager::queueOwnCommitment(const std::string& start, const std::string& end, uint64_t keys) {
+    if (keys == 0) return;
+    const std::string key = ownCommitmentKey(start, end, keys);
+    {
+        std::lock_guard<std::mutex> lk(own_commit_mutex_);
+        OwnCommitment& c = own_commitments_[key];
+        c.start = start;
+        c.end = end;
+        c.keys = keys;
+        c.created = std::chrono::steady_clock::now();
+        auto e = early_attestations_.find(key);
+        if (e != early_attestations_.end()) {
+            for (auto& kv : e->second) c.atts.insert(kv);
+            early_attestations_.erase(e);
+        }
+    }
+    Logger::info("Consensus v4: waiting for " + std::to_string(consensus_v4::kMinAttestations) +
+                 " attestation(s) before minting " + start + "-" + end);
+    tryMintOwnCommitment(key);
+}
+
+bool NetworkManager::tryMintOwnCommitment(const std::string& key) {
+    OwnCommitment c;
+    {
+        std::lock_guard<std::mutex> lk(own_commit_mutex_);
+        auto it = own_commitments_.find(key);
+        if (it == own_commitments_.end() || it->second.atts.size() < consensus_v4::kMinAttestations) return false;
+        c = it->second;
+    }
+    KeyspaceBlock block = buildKeyspaceBlock(c.start, c.end, c.keys, getLocalAlias());
+    for (const auto& kv : c.atts) {
+        if (block.commitments.front().attestations.size() >= consensus_v4::kMaxAttestationsChecked) break;
+        block.commitments.front().attestations.push_back(kv.second);
+    }
+    if (!ingestKeyspaceBlock(getLocalAlias(), block, /*penalize_peer=*/false)) {
+        Logger::warn("Consensus v4: could not add our block for " + c.start + "-" + c.end + "; kept pending");
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(own_commit_mutex_);
+        own_commitments_.erase(key);
+    }
+    std::string ledger_path = config_.data_directory + "/reward_ledger.json";
+    if (!reward_system_.save(ledger_path)) Logger::warn("Failed to save reward ledger to " + ledger_path);
+    nlohmann::json j = block;
+    MessageHandler handler;
+    broadcastMessage(handler.makeMessage(MessageVerb::BlockData, j.dump()));
+    Logger::info("Consensus v4: minted KeyspaceBlock height=" + std::to_string(block.header.height) + " for " +
+                 c.start + "-" + c.end + " with " + std::to_string(block.commitments.front().attestations.size()) +
+                 " attestation(s)");
+    return true;
+}
+
+void NetworkManager::expireOwnCommitments() {
+    const auto now = std::chrono::steady_clock::now();
+    std::vector<std::string> retry;
+    {
+        std::lock_guard<std::mutex> lk(own_commit_mutex_);
+        for (auto it = own_commitments_.begin(); it != own_commitments_.end();) {
+            if (now - it->second.created > kOwnCommitmentTtl) {
+                Logger::warn("Consensus v4: no attestation for " + it->second.start + "-" + it->second.end +
+                             " within " + std::to_string(std::chrono::duration_cast<std::chrono::minutes>(kOwnCommitmentTtl).count()) +
+                             " min; not minted (still in the completion ledgers)");
+                it = own_commitments_.erase(it);
+                continue;
+            }
+            if (it->second.atts.size() >= consensus_v4::kMinAttestations) retry.push_back(it->first);
+            ++it;
+        }
+        if (early_attestations_.size() > 128) early_attestations_.clear();
+    }
+    for (const auto& k : retry) (void)tryMintOwnCommitment(k);
+}
+
+size_t NetworkManager::pendingOwnCommitments() const {
+    std::lock_guard<std::mutex> lk(own_commit_mutex_);
+    return own_commitments_.size();
+}

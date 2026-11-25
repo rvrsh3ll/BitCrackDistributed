@@ -46,6 +46,7 @@ struct Lease {
     std::string end_key;
     std::string holder;
     Clock::time_point approved_at;
+    uint64_t seq = 0;  // approval order in this book (approved_at moves in tests)
 };
 
 // A vote received before its proposal.
@@ -88,6 +89,7 @@ struct ClaimBook {
     std::unordered_map<std::string, Clock::time_point> holder_last_done;  // holder -> last CHUNKDONE
     std::unordered_map<std::string, double> holder_min_rate;             // holder -> slowest keys/s seen
     std::deque<BufferedVote> buffered_votes;  // votes received before their proposal
+    uint64_t next_lease_seq = 1;  // Lease::seq
     Clock::time_point last_claim_attempt{};
     bool timeout_extended = false;  // extend the next proposal-expiry check once (buffered votes)
 
@@ -150,6 +152,22 @@ struct ClaimBook {
     // Lease length for `lease`: factor x the expected time at the holder's
     // slowest seen rate (or the slowest holder's), at least min_s.
     uint64_t leaseSeconds(const Lease& lease, uint64_t min_s, uint64_t factor) const;
+
+    // Drops the approved claim under `key` (watchdog release, expiry):
+    // its lease and, if it was claimed, its slot in holder's count.
+    // Erasing only `claimed` left the slot counted, and the holder was
+    // struck for too_many_active_chunks. False if `key` was not claimed.
+    bool releaseClaim(const std::string& key, const std::string& holder);
+
+    // `holder` completed [start_key, end_key]. A node searches one chunk at
+    // a time, so its leased claims approved before that one were left
+    // unsearched (seed1, 2026-11-22: two own claims approved together, the
+    // engine switched to the second). They are dropped here with their
+    // slots (they used to count until the 6 h lease ran out) and returned so
+    // the caller hands their ranges out again. Call before
+    // noteHolderCompletion, which drops the completed lease.
+    std::vector<Lease> takeSupersededLeases(const std::string& holder, const std::string& start_key,
+                                            const std::string& end_key);
 
     // Leases that ran out at `now` (their claims are dropped here).
     struct ExpiredLease {

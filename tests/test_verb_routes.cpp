@@ -105,8 +105,9 @@ TEST_CASE("PR69: the verb table holds exactly the verbs the if/else chain handle
         {"PSBTPROPOSAL", false}, {"PARTIALSIGNATURE", false}, {"AGGREGATEDSIGNATURE", false},
         {"INV", false}, {"GETBLOCKS", false}, {"HEADERS", false}, {"GETDATA", false}, {"BLOCK", false},
         {"BLOCKANN", false}, {"BLOCKREQ", false}, {"BLOCKDATA", false}, {"COMMIT", false},
+        {"COMMITATT", false},  // consensus v4 (payout hardening step 3)
     };
-    REQUIRE(expected.size() == 38);
+    REQUIRE(expected.size() == 39);
     CHECK(TA::verbRouteTable() == expected);
     CHECK(TA::verbRouteTable().count("HELLO") == 0);  // handled before the table
 }

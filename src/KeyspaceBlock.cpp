@@ -13,6 +13,11 @@ void to_json(json& j, const KeyspaceCommitment& c) {
         {"reward_address", c.reward_address},
         {"proof", c.proof}
     };
+    if (!c.attestations.empty()) {
+        json a = json::array();
+        for (const auto& x : c.attestations) a.push_back({{"alias", x.alias}, {"pubkey", x.pubkey}, {"sig", x.sig}});
+        j["attestations"] = std::move(a);
+    }
 }
 
 void from_json(const json& j, KeyspaceCommitment& c) {
@@ -22,6 +27,19 @@ void from_json(const json& j, KeyspaceCommitment& c) {
     c.peer_id = j.value("peer_id", "");
     c.reward_address = j.value("reward_address", "");
     c.proof = j.value("proof", "");
+    c.attestations.clear();
+    auto it = j.find("attestations");
+    if (it != j.end() && it->is_array()) {
+        for (const auto& x : *it) {
+            if (c.attestations.size() >= 64) break;  // more are never needed
+            if (!x.is_object()) continue;
+            CommitAttestation a;
+            a.alias = x.value("alias", "");
+            a.pubkey = x.value("pubkey", "");
+            a.sig = x.value("sig", "");
+            c.attestations.push_back(std::move(a));
+        }
+    }
 }
 
 void to_json(json& j, const KeyspaceBlockHeader& h) {

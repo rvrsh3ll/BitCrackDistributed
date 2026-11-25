@@ -96,7 +96,7 @@ if "%BUILD_TESTS%"=="ON" (
 
 echo.
 echo Build complete: build_vs2022\%CONFIG%\bitcrack-distributed.exe
-if /i "%COPY_DIST%"=="ON" echo Packaged copies: dist\windows\cli and dist\windows\gui
+if /i "%COPY_DIST%"=="ON" echo Packaged copy: dist\windows\cli
 popd
 endlocal
 exit /b 0

@@ -5,6 +5,14 @@
 #include <cstdint>
 #include "json.hpp"
 
+// Consensus v4: a node other than the miner vouches for a commitment.
+// sig = ECDSA(attester node key, consensus_v4::attestationDigest(...)).
+struct CommitAttestation {
+    std::string alias;   // attester's node alias (must differ from the miner)
+    std::string pubkey;  // compressed secp256k1, hex
+    std::string sig;     // DER hex
+};
+
 struct KeyspaceCommitment {
     std::string range_start;   // hex 0x...
     std::string range_end;     // hex 0x...
@@ -12,6 +20,9 @@ struct KeyspaceCommitment {
     std::string peer_id;       // alias or node id
     std::string reward_address; // bitcoin address for this peer
     std::string proof;         // optional compact proof string
+    // v4: not covered by the block hash (older nodes ignore the field);
+    // v4 nodes require kMinAttestations valid ones from activation height on.
+    std::vector<CommitAttestation> attestations;
 };
 
 struct KeyspaceBlockHeader {

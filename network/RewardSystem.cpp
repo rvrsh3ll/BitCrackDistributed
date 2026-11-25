@@ -244,3 +244,8 @@ void RewardSystem::reset() {
             return false;
         }
     }
+
+std::unordered_map<std::string, std::string> RewardSystem::rewardAddressBook() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return reward_addresses_;
+}

@@ -1,37 +1,50 @@
 # Installing BitCrack Distributed on Windows (NVIDIA RTX 5080)
 
-> **Status (2026-11-18): the Windows build has not been verified yet.** Nobody has
-> built and run current `main` on Windows. The CI "Windows CPU" job
-> (`.github/workflows/launch-gates.yml`) fails at the build step: Chocolatey now
-> installs OpenSSL 4.x, and asio 1.30's SSL helper doesn't compile against it
-> (`asn1_string_st` undefined). This guide pins OpenSSL 3.x for that reason.
-> A syntax-only cross-check of every core and network source for a Windows
-> target passed (35/36 files; the remaining one is a libc++-only issue that
-> doesn't affect MSVC), but that isn't a real MSVC build. Please report what
-> you hit (exact error text and the step).
+> **Status (2026-11-20): CI builds and tests Windows; not yet run by a person.**
+> The manual-only GitHub Actions workflow **Windows build**
+> (`.github/workflows/windows.yml`) builds current `main` with MSVC 2022
+> and OpenSSL 3 (pinned through vcpkg), runs the full test suite on
+> Windows, checks the web dashboard answers, and packages a ready-to-run zip. First green run: 2026-11-20.
+> The Qt GUI was removed (Nov 2026); the node serves a web dashboard instead
+> (`--dashboard`, then open http://127.0.0.1:3339/). Please report what you hit
+> (exact error text and the step).
 
-> **GPU status: `main` searches on the CPU.** The real CUDA search kernel is in
-> development on a separate branch (`cuda-3-kernel-integration`). It isn't merged
-> until it has been verified on real hardware. On `main`, an RTX 5080 isn't used
-> for searching. See [Testing the CUDA kernel](#testing-the-cuda-kernel).
+### Prebuilt zip from CI (no build tools needed)
+
+1. Open the latest green **Windows build** run under the repository's
+   *Actions* tab (or start one: *Run workflow*, or
+   `gh workflow run windows.yml --ref main`).
+2. Download the artifact **`bitcrack-distributed-windows-x64`** at the bottom
+   of the run page (you must be signed in to GitHub; artifacts expire after 30
+   days) and unzip it anywhere.
+3. From a terminal run `bitcrack-distributed.exe --dashboard` and open
+   http://127.0.0.1:3339/ in a browser. Other modes: `--daemon`, `--bench 10`,
+   `--derive-address 1`.
+
+The zip bundles OpenSSL 3
+(`libcrypto-3-x64.dll`, `libssl-3-x64.dll`) and the MSVC runtime DLLs. CPU
+search only (no CUDA).
+
+> **GPU status:** the CUDA search kernel is on `main` (verified on an RTX 5070
+> under Linux). The CI zip is CPU-only; to search on an RTX 5080, build with CUDA
+> yourself, see [Building with CUDA](#testing-the-cuda-kernel). The CUDA build has
+> not been tried on Windows by a person yet.
 
 Everything below was checked against the repository's `CMakeLists.txt`,
 `src/CMakeLists.txt`, `tests/CMakeLists.txt`, `gpu/CMakeLists.txt` and
-`vcpkg.json` (and, for the CUDA section, the `cuda-3-kernel-integration`
-branch).
+`vcpkg.json`.
 
 ## 1. Prerequisites
 
 | What | Version | Why |
 |---|---|---|
-| NVIDIA driver | **570 or newer** | The RTX 5080 is Blackwell (compute capability 12.0, `sm_120`). CUDA 12.8 needs an R570+ driver. Check with `nvidia-smi`. Only needed for the CUDA test branch. |
+| NVIDIA driver | **570 or newer** | The RTX 5080 is Blackwell (compute capability 12.0, `sm_120`). CUDA 12.8 needs an R570+ driver. Check with `nvidia-smi`. Only needed for a CUDA build. |
 | Visual Studio 2022 | 17.x, workload **"Desktop development with C++"** (MSVC v143, Windows 10/11 SDK, "C++ CMake tools for Windows", which includes Ninja) | Compiler. The project is C++17. |
 | CMake | **3.18+** (`cmake_minimum_required(VERSION 3.18)`); the copy bundled with VS 2022 is fine | Build system. |
 | Git | any recent | Clone, and CMake's FetchContent downloads Catch2, asio and nlohmann/json. Needs internet at configure time. |
-| vcpkg | any recent clone | OpenSSL (required) and optionally Qt 6. |
+| vcpkg | any recent clone | OpenSSL (required). |
 | OpenSSL | **3.x (not 4.x)** | Required (`find_package(OpenSSL REQUIRED)`). |
-| CUDA Toolkit | **12.8 or newer** | Only for the CUDA test branch: `sm_120` needs CUDA ≥ 12.8. `main` should be built with `-DDISABLE_CUDA=ON`. |
-| Qt 6 | 6.5+ (MSVC 2022 64-bit), Core, Widgets and Network | **Optional**, only for the GUI (`BITCRACK_ENABLE_GUI`, ON by default, used only when Qt is found). |
+| CUDA Toolkit | **12.8 or newer** | Only for a CUDA build: `sm_120` needs CUDA ≥ 12.8. A CPU-only build uses `-DDISABLE_CUDA=ON`. |
 
 ### Dependencies fetched automatically at configure time
 
@@ -45,7 +58,8 @@ branch).
 ### OpenSSL 3 via vcpkg (recommended)
 
 The repository has a vcpkg **manifest** (`vcpkg.json`, dependency `openssl`,
-pinned `builtin-baseline` 7476f0d4…). That baseline resolves to **OpenSSL 3.1.2**.
+pinned `builtin-baseline` 22375ff8…, the same vcpkg commit CI uses). That
+baseline resolves to **OpenSSL 3.6.5**.
 In manifest mode, CMake installs it automatically during configure when you
 pass the vcpkg toolchain file. You don't need to run `vcpkg install`.
 
@@ -59,20 +73,6 @@ Alternative without vcpkg: install a **3.x** "Win64 OpenSSL" build (for example
 the 3.5 LTS from slproweb.com, full installer, not "Light") into
 `C:\Program Files\OpenSSL-Win64`. CMake looks there automatically, or you can
 set `OPENSSL_ROOT_DIR`. Don't use `choco install openssl`: it now installs 4.x.
-
-### Qt 6 (optional, GUI only)
-
-`vcpkg.json` lists only `openssl`, so Qt doesn't come from the manifest. Pick one:
-
-- **Qt online installer**: Qt 6.5+ → "MSVC 2022 64-bit". Then add
-  `-DCMAKE_PREFIX_PATH=C:\Qt\6.x.y\msvc2022_64` to the configure line.
-- **vcpkg classic mode**: `vcpkg install openssl:x64-windows qtbase:x64-windows`
-  (a long build). Then configure with `-DVCPKG_MANIFEST_MODE=OFF` and the same
-  toolchain file. Check that `vcpkg list openssl` shows **3.x**.
-
-A GUI build links the exe as a Windows GUI app (`WIN32_EXECUTABLE`), so it has
-**no console window**. For a console node, build with `-DBITCRACK_ENABLE_GUI=OFF`
-(as below).
 
 ## 2. Configure and build (`main`, CPU search)
 
@@ -95,16 +95,15 @@ cmake -S . -B build -G Ninja `
   -DCMAKE_BUILD_TYPE=Release `
   -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
   -DDISABLE_CUDA=ON `
-  -DBITCRACK_ENABLE_GUI=OFF `
   -DBITCRACK_BUILD_TESTS=ON `
   "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /DNOMINMAX"
 
 cmake --build build --config Release
 ```
 
-- `-DDISABLE_CUDA=ON`: `main` has no real CUDA search, so leave CUDA out and
-  avoid toolkit problems. (If CUDA is installed and you omit this, CMake enables
-  CUDA automatically and compiles `main`'s placeholder kernels.)
+- `-DDISABLE_CUDA=ON`: a CPU-only build that avoids toolkit problems. (If CUDA
+  is installed and you omit this, CMake enables CUDA automatically.) For GPU
+  search see [Building with CUDA](#testing-the-cuda-kernel).
 - `CMAKE_CXX_FLAGS`: the same flags the CI Windows job uses. Some sources check
   `WIN32`, which MSVC's default flags define. Spelling it out keeps a custom
   flags line from dropping it.
@@ -130,8 +129,7 @@ Run the tests (optional, a few minutes):
   (`CMAKE_RUNTIME_OUTPUT_DIRECTORY` is `<build>\<config>`, for Ninja and for the
   Visual Studio generator alike).
 - With `BITCRACK_COPY_BUILD_TO_DIST` (ON by default on Windows), a post-build
-  step also copies the exe to `dist\windows\cli\bitcrack-distributed-cli.exe` and
-  `dist\windows\gui\bitcrack-distributed-gui.exe` (the same binary). Pass
+  step also copies the exe to `dist\windows\cli\bitcrack-distributed-cli.exe`. Pass
   `-DBITCRACK_COPY_BUILD_TO_DIST=OFF` to skip that.
 - OpenSSL DLLs: with vcpkg, `libssl-3-x64.dll` and `libcrypto-3-x64.dll` are copied
   next to the exe by vcpkg's app-local deployment. With the slproweb installer,
@@ -203,16 +201,10 @@ README's "Stats API" section.
 
 ## Testing the CUDA kernel
 
-For testers who want to help verify the GPU search on the RTX 5080. The CUDA
-development branch (`cuda-3-kernel-integration`, not part of the public release
-yet):
-- adds the real kernel, `bitcrack_tests "[gpu]"` and `--gpu-bench`;
-- sets `BITCRACK_CUDA_ARCH` (default `75;86;89;120`, so it includes `sm_120`);
-- fails configure clearly if `120` is requested with a toolkit older than 12.8.
-
-The branch forks from an **older `main`** (before the P2P targets,
-DNS bootstrap, puzzle trust, chainstore restart, block sync, stats API). Use it
-for the GPU tests and benchmark below, **not** for joining the public seeds.
+Building with CUDA, to search on the RTX 5080. `main` has the real kernel,
+`bitcrack_tests "[gpu]"`, `--gpu-bench` and `--gpu-only`. `BITCRACK_CUDA_ARCH`
+defaults to `75;86;89;120` (so it includes `sm_120`), and configure fails
+clearly if `120` is requested with a toolkit older than 12.8.
 
 1. Install CUDA Toolkit 12.8+ (the Visual Studio integration is optional with
    Ninja). Check in a new x64 Developer PowerShell:
@@ -223,13 +215,11 @@ for the GPU tests and benchmark below, **not** for joining the public seeds.
    ```
 2. Build:
    ```powershell
-   git fetch origin cuda-3-kernel-integration
-   git checkout cuda-3-kernel-integration
    cmake -S . -B build-cuda -G Ninja `
      -DCMAKE_BUILD_TYPE=Release `
      -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
      -DDISABLE_CUDA=OFF -DBITCRACK_CUDA_ARCH=120 `
-     -DBITCRACK_ENABLE_GUI=OFF -DBITCRACK_BUILD_TESTS=ON -DBITCRACK_COPY_BUILD_TO_DIST=OFF `
+     -DBITCRACK_BUILD_TESTS=ON -DBITCRACK_COPY_BUILD_TO_DIST=OFF `
      "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /DNOMINMAX"
    cmake --build build-cuda --config Release
    ```
@@ -241,10 +231,14 @@ for the GPU tests and benchmark below, **not** for joining the public seeds.
    .\build-cuda\Release\bitcrack_tests.exe "[gpu][device]"   # device tests only (skip without a GPU)
    .\build-cuda\Release\bitcrack-distributed.exe --gpu-bench 20
    ```
-   The branch links the shared CUDA runtime, so `cudart64_12.dll` (`cudart64_13.dll` with CUDA 13) must be on
+   The CUDA build links the shared CUDA runtime, so `cudart64_12.dll` (`cudart64_13.dll` with CUDA 13) must be on
    PATH. The CUDA installer adds `%CUDA_PATH%\bin`.
-4. Please report the test summary, the `--gpu-bench` Mkeys/s, and any errors.
-   Details are in `docs/CUDA_KERNEL.md` on that branch.
+4. Run the node on the GPU only, with the dashboard:
+   ```powershell
+   .\build-cuda\Release\bitcrack-distributed.exe --gpu-only --dashboard --reward <your BTC address>
+   ```
+   Please report the test summary, the `--gpu-bench` Mkeys/s, and any errors.
+   Details are in [docs/CUDA_KERNEL.md](CUDA_KERNEL.md).
 
 ## Troubleshooting
 
@@ -284,6 +278,6 @@ for the GPU tests and benchmark below, **not** for joining the public seeds.
 - Pass the vcpkg toolchain file, or set `OPENSSL_ROOT_DIR` to the OpenSSL 3
   install root.
 
-**No console output / window closes immediately**
-- You built with Qt found (GUI build, Windows GUI subsystem). Reconfigure with
-  `-DBITCRACK_ENABLE_GUI=OFF` for a console node.
+**Window closes immediately when double-clicked**
+- It is a console program: start it from a terminal (PowerShell or cmd) so you
+  can read its output, and add `--dashboard` for the browser view.

@@ -9,9 +9,23 @@
 #include <sstream>
 #include <system_error>
 
+#include <openssl/sha.h>
+
 #include "EllipticCurve.h"
 #include "Logger.h"
 #include "json.hpp"
+
+#include "SecretFile.h"
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #if !defined(_WIN32) && !defined(WINDOWS)
 #include <cerrno>
@@ -56,7 +70,9 @@ void narrowPermissions(const std::string& path) {
         }
     }
 #else
-    (void)path;
+    if (secret_file::restrictToOwner(path)) {
+        Logger::warn("Node key file was readable by others; reset to an owner-only ACL: " + path);
+    }
 #endif
 }
 
@@ -145,12 +161,20 @@ bool writeOwnerOnlyFile(const std::string& path, const std::string& content, boo
     errno = saved;
     return rc == 0;
 #else
-    // Windows untested: no POSIX modes; the file inherits the directory ACL.
-    if (exclusive && fs::exists(path)) return false;
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f << content;
-    return static_cast<bool>(f);
+    // Owner-only DACL temp file, then an atomic move. Without
+    // MOVEFILE_REPLACE_EXISTING the move fails when the key already exists, so
+    // a concurrent creator's key is never overwritten (the old exists() +
+    // truncate let parallel first starts each write their own key).
+    const std::string tmp = path + ".tmp." + uniqueSuffix();
+    std::error_code ec;
+    if (!secret_file::writeOwnerOnly(tmp, content)) {
+        fs::remove(tmp, ec);
+        return false;
+    }
+    const DWORD flags = MOVEFILE_WRITE_THROUGH | (exclusive ? 0u : static_cast<DWORD>(MOVEFILE_REPLACE_EXISTING));
+    const bool ok = MoveFileExW(fs::path(tmp).c_str(), fs::path(path).c_str(), flags) != FALSE;
+    if (!ok) fs::remove(tmp, ec);
+    return ok;
 #endif
 }
 
@@ -165,6 +189,87 @@ std::string normalizePubkeyHex(const std::string& hex) {
     if (h.size() == 66 && (h.compare(0, 2, "02") == 0 || h.compare(0, 2, "03") == 0)) return h;
     if (h.size() == 130 && h.compare(0, 2, "04") == 0) return h;
     return std::string();
+}
+
+std::string nodeIdPath(const std::string& data_dir) {
+    if (data_dir.empty()) return std::string();
+    return (fs::path(data_dir) / "node_id.json").string();
+}
+
+bool isValidNodeId(const std::string& id) {
+    if (id.empty() || id.size() > 64) return false;
+    return std::all_of(id.begin(), id.end(), [](unsigned char ch) { return std::isalnum(ch) != 0 || ch == '-'; });
+}
+
+std::string loadNodeId(const std::string& data_dir) {
+    const std::string path = nodeIdPath(data_dir);
+    if (path.empty()) return std::string();
+    std::error_code ec;
+    if (!fs::exists(path, ec)) return std::string();
+    std::ifstream f(path, std::ios::binary);
+    try {
+        json j;
+        f >> j;
+        const std::string id = j.is_object() && j.contains("node_id") && j["node_id"].is_string()
+                                   ? j["node_id"].get<std::string>()
+                                   : std::string();
+        if (isValidNodeId(id)) return id;
+    } catch (const std::exception&) {
+    }
+    Logger::error("Node id file " + path + " is unusable; ignoring it");
+    return std::string();
+}
+
+bool saveNodeId(const std::string& data_dir, const std::string& id) {
+    const std::string path = nodeIdPath(data_dir);
+    if (path.empty() || !isValidNodeId(id)) return false;
+    std::error_code ec;
+    fs::create_directories(data_dir, ec);
+    json j;
+    j["version"] = 1;
+    j["node_id"] = id;
+    return writeOwnerOnlyFile(path, j.dump(2) + "\n", /*exclusive=*/false);
+}
+
+std::string resolveNodeId(const std::string& data_dir, const std::string& config_uuid, std::string* note) {
+    auto say = [&](const std::string& s) { if (note) *note = s; };
+    const std::string saved = loadNodeId(data_dir);
+    if (!config_uuid.empty()) {
+        if (saved != config_uuid && !data_dir.empty()) {
+            if (!saved.empty()) {
+                Logger::warn("config.json network.uuid " + config_uuid + " differs from " + nodeIdPath(data_dir) +
+                             " (" + saved + "); config.json wins and the saved id is updated");
+            }
+            if (!saveNodeId(data_dir, config_uuid)) {
+                Logger::warn("Could not save the node id to " + nodeIdPath(data_dir));
+            }
+        }
+        say("config.json");
+        return config_uuid;
+    }
+    if (!saved.empty()) {
+        say(nodeIdPath(data_dir));
+        return saved;
+    }
+    say("none");
+    return std::string();
+}
+
+std::string aliasFromPubkey(const std::string& pubkey_hex) {
+    const std::string h = normalizePubkeyHex(pubkey_hex);
+    if (h.empty()) return std::string();
+    std::string raw;
+    raw.reserve(h.size() / 2);
+    for (size_t i = 0; i + 1 < h.size(); i += 2) raw.push_back(static_cast<char>(std::stoi(h.substr(i, 2), nullptr, 16)));
+    unsigned char md[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const unsigned char*>(raw.data()), raw.size(), md);
+    static const char* kHex = "0123456789abcdef";
+    std::string out;
+    for (int i = 0; i < 6; ++i) {
+        out.push_back(kHex[md[i] >> 4]);
+        out.push_back(kHex[md[i] & 0xF]);
+    }
+    return out;
 }
 
 LoadStatus loadOrCreateNodeKey(const std::string& data_dir, KeyPair& out, std::string* detail) {

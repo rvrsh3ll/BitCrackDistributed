@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BitCrack Distributed dashboard</title>
+<style>
+:root{--bg:#101214;--panel:#181b1f;--panel2:#1d2126;--edge:#2a2e34;--fg:#f2f4f7;--muted:#9aa3ad;
+--good:#3cb44b;--warn:#ffe119;--bad:#e6194b;--blue:#4a9be8;--orange:#f58230;--teal:#3cc29c;--gold:#e0b440}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"DejaVu Sans",sans-serif}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:16px 24px 8px}
+h1{font-size:20px;margin:0;font-weight:650}
+h2{font-size:14px;margin:0 0 10px;font-weight:600;color:var(--fg)}
+h2 small{color:var(--muted);font-weight:400;margin-left:6px}
+.muted{color:var(--muted)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace;font-size:12.5px}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;background:var(--panel2);border:1px solid var(--edge)}
+.pill.good{color:#0d1a0f;background:var(--good);border-color:var(--good)}
+.pill.warn{color:#1d1a05;background:var(--warn);border-color:var(--warn)}
+.pill.bad{color:#fff;background:var(--bad);border-color:var(--bad)}
+.meta{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--muted);font-size:12.5px}
+main{padding:8px 24px 32px;display:grid;gap:16px;grid-template-columns:repeat(12,1fr)}
+.card{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:14px 16px;min-width:0}
+.s12{grid-column:span 12}.s8{grid-column:span 8}.s6{grid-column:span 6}.s4{grid-column:span 4}.s3{grid-column:span 3}.s2{grid-column:span 2}
+@media (max-width:1100px){.s8,.s6,.s4{grid-column:span 12}.s3,.s2{grid-column:span 6}}
+.kpi .v{font-size:24px;font-weight:650;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px}
+.kpi .sub{color:var(--muted);font-size:12.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--edge);vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:12px}
+tr:last-child td{border-bottom:none}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px}
+.kv div:nth-child(odd){color:var(--muted)}
+.kv div{min-width:0;overflow-wrap:anywhere}
+.tabs{display:inline-flex;gap:4px;margin-left:8px}
+.tabs button{background:var(--panel2);color:var(--muted);border:1px solid var(--edge);border-radius:6px;padding:2px 10px;font:inherit;font-size:12px;cursor:pointer}
+.tabs button.on{color:var(--fg);border-color:var(--blue)}
+svg text{fill:var(--muted);font-size:11px}
+.banner{grid-column:span 12;border-radius:10px;padding:12px 16px;font-weight:600}
+.banner.bad{background:#3a1018;border:1px solid var(--bad)}
+.banner.found{background:#1d2a12;border:1px solid var(--good)}
+#logs{height:300px;overflow:auto;background:#0c0e10;border:1px solid var(--edge);border-radius:8px;padding:8px 10px;white-space:pre-wrap;overflow-wrap:anywhere}
+#logs .warn{color:var(--warn)}#logs .error{color:#ff6b81}#logs .t{color:#6b737c}
+.legend{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12.5px;margin-top:8px}
+.sw{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:-1px;border:1px solid var(--edge)}
+.bar{height:12px;border-radius:3px;background:var(--orange)}
+.bar.pool{background:var(--teal);height:8px;margin-top:3px}
+.bartrack{background:var(--panel2);border-radius:3px;overflow:hidden}
+input[type=search]{background:var(--panel2);border:1px solid var(--edge);color:var(--fg);border-radius:6px;padding:3px 8px;font:inherit;font-size:12.5px}
+footer{padding:0 24px 24px;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>BitCrack Distributed</h1>
+  <span id="state" class="pill">connecting…</span>
+  <div class="meta">
+    <span>node <b id="node" class="mono">-</b></span>
+    <span id="ver">-</span>
+    <span>up <b id="uptime">-</b></span>
+    <span>updated <b id="updated">-</b></span>
+  </div>
+</header>
+<main>
+  <div id="errbanner" class="banner bad" hidden></div>
+  <div id="foundbanner" class="banner found" hidden></div>
+
+  <div class="card kpi s3"><div class="l">Keys / second</div><div class="v" id="kps">-</div><div class="sub" id="kps_sub">-</div></div>
+  <div class="card kpi s3"><div class="l">Keys checked (this run)</div><div class="v" id="keys">-</div><div class="sub" id="keys_sub">-</div></div>
+  <div class="card kpi s2"><div class="l">Chain height</div><div class="v" id="height">-</div><div class="sub mono" id="tip">-</div></div>
+  <div class="card kpi s2"><div class="l">Peers</div><div class="v" id="peers">-</div><div class="sub" id="peers_sub">-</div></div>
+  <div class="card kpi s2"><div class="l">Chunks done (this node)</div><div class="v" id="chunks">-</div><div class="sub mono" id="chunk_cur">-</div></div>
+
+  <div class="card s8">
+    <h2>Search rate <span class="tabs"><button data-w="1h" class="on">1 hour</button><button data-w="24h">24 hours</button></span><small id="rate_note"></small></h2>
+    <div id="rate_chart"></div>
+  </div>
+  <div class="card s4">
+    <h2>Puzzle</h2>
+    <div class="kv" id="puzzle"></div>
+  </div>
+
+  <div class="card s6"><h2>Chain height <small id="height_note"></small></h2><div id="height_chart"></div></div>
+  <div class="card s6"><h2>Connected peers over time</h2><div id="peers_chart"></div></div>
+
+  <div class="card s8">
+    <h2>Peers <small id="peers_note"></small></h2>
+    <table><thead><tr><th>Node</th><th>Address</th><th>Connected</th><th>Handshake</th><th>Auth</th></tr></thead><tbody id="peer_rows"></tbody></table>
+  </div>
+  <div class="card s4">
+    <h2>Current chunk</h2>
+    <div class="kv" id="chunk"></div>
+  </div>
+
+  <div class="card s6">
+    <h2>Keyspace searched <small id="ks_note"></small></h2>
+    <canvas id="ks" width="512" height="512" style="width:100%;max-width:512px;aspect-ratio:1;display:block;margin:0 auto;border:1px solid var(--edge);image-rendering:pixelated"></canvas>
+    <div class="muted" style="font-size:12px;margin-top:6px" id="ks_caption"></div>
+    <div class="legend" id="ks_legend"></div>
+  </div>
+  <div class="card s6">
+    <h2>Payout split from the best chain <small id="pay_note"></small></h2>
+    <div id="pay"></div>
+  </div>
+
+  <div class="card s6">
+    <h2>Search hardware</h2>
+    <div class="kv" id="hw"></div>
+  </div>
+  <div class="card s6">
+    <h2>Solved puzzles and payouts</h2>
+    <div id="solved" class="muted">No puzzle solved while this node has been running.</div>
+  </div>
+
+  <div class="card s12">
+    <h2>Log <small id="log_note"></small> <input type="search" id="logfilter" placeholder="filter" style="margin-left:10px"></h2>
+    <div id="logs" class="mono"></div>
+  </div>
+</main>
+<footer>Read-only view of this node's local API (<span class="mono">/status /peers /chunks /history /system /events /keyspace /rewards</span>). Times are your browser's local time.</footer>
+<script>
+"use strict";
+const PALETTE=[[230,25,75],[60,180,75],[255,225,25],[0,130,200],[245,130,48],[145,30,180],[70,240,240],[240,50,230],[210,245,60],[250,190,212],[0,128,128],[220,190,255],[170,110,40],[255,250,200],[128,0,0],[170,255,195],[128,128,0],[255,215,180],[0,0,128],[128,128,128]];
+const EMPTY=[24,24,24];
+const SEEDS={"ba93c6e25b5a":"seed1","0d660a51f472":"seed2","476e1eeb0a5b":"seed3"};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtInt=n=>(n==null||isNaN(n))?"-":Number(n).toLocaleString("en-US");
+function fmtRate(k){k=Number(k)||0;if(k>=1e9)return(k/1e9).toFixed(2)+" Gkeys/s";if(k>=1e6)return(k/1e6).toFixed(2)+" Mkeys/s";if(k>=1e3)return(k/1e3).toFixed(1)+" kkeys/s";return k.toFixed(0)+" keys/s"}
+function fmtShort(k){k=Number(k)||0;if(k>=1e12)return(k/1e12).toFixed(1)+"T";if(k>=1e9)return(k/1e9).toFixed(1)+"G";if(k>=1e6)return(k/1e6).toFixed(1)+"M";if(k>=1e3)return(k/1e3).toFixed(1)+"k";return String(Math.round(k))}
+function fmtDur(s){s=Math.max(0,Math.floor(Number(s)||0));const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);if(d)return d+"d "+h+"h";if(h)return h+"h "+m+"m";if(m)return m+"m "+(s%60)+"s";return s+"s"}
+const tz=(()=>{try{return new Intl.DateTimeFormat("en-US",{timeZoneName:"short"}).formatToParts(new Date()).find(p=>p.type==="timeZoneName").value}catch(e){return""}})();
+const fmtClock=ms=>new Date(ms).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
+const fmtClockS=ms=>new Date(ms).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",second:"2-digit"});
+const nodeName=id=>SEEDS[id]?id+" ("+SEEDS[id]+")":id;
+function kv(el,rows){$(el).innerHTML=rows.map(([k,v,mono])=>`<div>${esc(k)}</div><div${mono?' class="mono"':""}>${esc(v)}</div>`).join("")}
+async function getJSON(p){const r=await fetch(p,{cache:"no-store"});if(!r.ok)throw new Error(p+" -> HTTP "+r.status);return r.json()}
+
+// ---- SVG line chart -------------------------------------------------------
+function niceMax(v){if(v<=0)return 1;const e=Math.pow(10,Math.floor(Math.log10(v)));for(const m of[1,2,2.5,5,10])if(m*e>=v)return m*e;return 10*e}
+function lineChart(el,series,opt){
+  const W=Math.max(320,$(el).clientWidth||640),H=opt.h||200,L=58,R=12,T=10,B=24;
+  const pts=series.filter(p=>p[1]!=null);
+  if(pts.length<2){$(el).innerHTML=`<div class="muted" style="height:${H}px;display:flex;align-items:center;justify-content:center">${esc(opt.empty||"Collecting data…")}</div>`;return}
+  const x0=pts[0][0],x1=pts[pts.length-1][0]||x0+1;
+  let lo=opt.zero?0:Math.min(...pts.map(p=>p[1])),hi=Math.max(...pts.map(p=>p[1]));
+  if(opt.zero)hi=niceMax(hi*1.08);else{if(hi===lo){hi+=1;lo=Math.max(0,lo-1)}const pad=(hi-lo)*0.08;hi+=pad;lo=Math.max(0,lo-pad)}
+  const X=t=>L+(W-L-R)*(x1===x0?0:(t-x0)/(x1-x0)),Y=v=>T+(H-T-B)*(1-(v-lo)/(hi-lo||1));
+  let g="";for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4,y=Y(v);g+=`<line x1="${L}" x2="${W-R}" y1="${y}" y2="${y}" stroke="#2a2e34"/><text x="${L-6}" y="${y+4}" text-anchor="end">${esc(opt.fmt?opt.fmt(v):fmtShort(v))}</text>`}
+  const nt=Math.min(6,Math.max(2,Math.floor((W-L-R)/110)));for(let i=0;i<=nt;i++){const t=x0+(x1-x0)*i/nt;g+=`<text x="${X(t)}" y="${H-6}" text-anchor="${i===0?"start":i===nt?"end":"middle"}">${esc(fmtClock(t))}</text>`}
+  let d="",step=!!opt.step;pts.forEach((p,i)=>{const x=X(p[0]).toFixed(1),y=Y(p[1]).toFixed(1);if(!i)d+=`M${x},${y}`;else if(step)d+=`H${x}V${y}`;else d+=`L${x},${y}`});
+  const area=opt.zero?`<path d="${d}V${Y(lo)}H${X(pts[0][0])}Z" fill="${opt.color}" opacity="0.15"/>`:"";
+  const last=pts[pts.length-1];
+  $(el).innerHTML=`<svg width="100%" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img">${g}${area}<path d="${d}" fill="none" stroke="${opt.color}" stroke-width="1.8"/><circle cx="${X(last[0])}" cy="${Y(last[1])}" r="3" fill="${opt.color}"/></svg>`;
+}
+
+// ---- state ------------------------------------------------------------------
+let win="1h",hist=null,lastSeq=0,logLines=[],failures=0;
+document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{win=b.dataset.w;document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",x===b));drawHistory()});
+$("logfilter").oninput=drawLogs;
+
+function drawHistory(){
+  if(!hist)return;
+  const rows=win==="1h"?hist.points:hist.minutes;
+  $("rate_note").textContent=win==="1h"?"one point per sample, last hour":"1-minute averages, last 24 hours"+(hist.minutes.length<2?" (needs a few minutes of uptime)":"");
+  lineChart("rate_chart",rows.map(r=>[r[0],r[1]]),{color:"#f58230",zero:true,h:220,fmt:v=>fmtShort(v),empty:win==="24h"?"Per-minute points appear after the first full minute.":"Collecting samples…"});
+  lineChart("height_chart",rows.map(r=>[r[0],r[2]]),{color:"#4a9be8",step:true,h:150,fmt:v=>fmtInt(Math.round(v))});
+  lineChart("peers_chart",rows.map(r=>[r[0],r[3]]),{color:"#3cb44b",step:true,zero:true,h:150,fmt:v=>String(Math.round(v))});
+}
+function drawLogs(){
+  const f=$("logfilter").value.toLowerCase(),el=$("logs"),atBottom=el.scrollTop+el.clientHeight>=el.scrollHeight-8;
+  el.innerHTML=logLines.filter(l=>!f||l.msg.toLowerCase().includes(f)).map(l=>`<div class="${esc(l.level)}"><span class="t">${esc(fmtClockS(l.t_ms))}</span> ${esc(l.msg)}</div>`).join("");
+  if(atBottom)el.scrollTop=el.scrollHeight;
+}
+
+async function fast(){
+  const [s,p,c,sys,ev]=[await getJSON("/status"),await getJSON("/peers"),await getJSON("/chunks"),await getJSON("/system"),await getJSON("/events?since="+lastSeq)];
+  $("node").textContent=s.node_id||"(standalone)";
+  $("ver").textContent="v"+s.version+" · "+s.commit;
+  $("uptime").textContent=fmtDur(s.uptime_seconds);
+  $("updated").textContent=fmtClockS(Date.now())+(tz?" "+tz:"");
+  const st=$("state");
+  if(s.found_key){st.className="pill good";st.textContent="KEY FOUND"}
+  else if(s.engine_running){st.className="pill good";st.textContent="searching"}
+  else if(s.node_id&&!s.peer_count){st.className="pill warn";st.textContent="waiting for peers"}
+  else{st.className="pill warn";st.textContent="idle / waiting for work"}
+  $("kps").textContent=fmtRate(s.keys_per_second);
+  $("kps_sub").textContent="1 min "+fmtRate(s.keys_per_second_1m)+" · 10 min "+fmtRate(s.keys_per_second_10m);
+  $("keys").textContent=fmtInt(s.total_keys_checked);
+  $("keys_sub").textContent=s.target_count+" target"+(s.target_count===1?"":"s")+(s.rescan?" · rescan "+s.rescan.remaining+"/"+s.rescan.listed+" left":"");
+  $("height").textContent=fmtInt(s.chain&&s.chain.height);
+  $("tip").textContent=s.chain&&s.chain.tip?"tip "+s.chain.tip.slice(0,16)+"…":"no chain yet";
+  $("peers").textContent=s.peer_count;
+  $("peers_sub").textContent=p.peers.filter(x=>x.handshake_complete).length+" handshaken";
+  $("chunks").textContent=fmtInt(s.chunks_completed_local);
+  $("chunk_cur").textContent=s.current_chunk&&s.current_chunk.id?s.current_chunk.id:"no chunk";
+  const pz=s.puzzle||{};
+  kv("puzzle",[["Puzzle",pz.number!=null?"#"+pz.number:"-"],["Target",pz.address||"-",true],["Range start",pz.range_start||"-",true],["Range end",pz.range_end||"-",true],["Reward address",s.reward_address||"not set",true],["Found key",s.found_key?"YES (see the node's found-key file)":"no"]]);
+  $("peer_rows").innerHTML=p.peers.length?p.peers.map(x=>`<tr><td class="mono">${esc(nodeName(x.alias||x.id))}${x.alias&&x.alias!==x.id?`<div class="muted">link ${esc(x.id)}</div>`:""}</td><td class="mono">${esc(x.address)}</td><td>${esc(fmtDur(x.connected_seconds))}</td><td>${x.handshake_complete?"yes":"no"}</td><td>${esc(x.auth)}</td></tr>`).join(""):`<tr><td colspan="5" class="muted">No peers connected.</td></tr>`;
+  $("peers_note").textContent=p.count+" connected";
+  const cc=c.current_chunk||{};
+  kv("chunk",[["Chunk",cc.id||"none"],["Start",cc.start||"-",true],["End",cc.end||"-",true],["Chunk size",c.chunk_size?fmtInt(c.chunk_size)+" keys":"-"],["Done by this node",fmtInt(c.completed_local)],["Done in ledger (all)",fmtInt(c.completed_total)],["Claims approved / pending",(c.claims_approved??"-")+" / "+(c.claims_pending??"-")]]);
+  const devs=(sys.gpu_devices||[]).map(d=>`${d.name}${d.memory_total_bytes?" · "+(d.memory_total_bytes/1073741824).toFixed(1)+" GiB":""}${d.cuda?" · CUDA":""}${d.opencl?" · OpenCL":""}`);
+  kv("hw",[["Mode",sys.gpu_only?"GPU only":(sys.cuda_enabled?"CPU + GPU":"CPU")],["CPU search threads",String(sys.cpu_workers)+" (machine has "+sys.hardware_threads+")"],["GPU devices",devs.length?devs.join("; "):"none"],["GPU search used",sys.gpu_search_used?"yes":"no"],["Process CPU",sys.process_cpu_percent==null?"-":sys.process_cpu_percent.toFixed(0)+"% of one core"],["Engine",sys.engine_running?"running":"stopped"],["Engine range",sys.engine_range&&sys.engine_range.start?sys.engine_range.start+" – "+sys.engine_range.end:"-",true]]);
+  if(ev.logs.length){logLines=logLines.concat(ev.logs).slice(-600);lastSeq=ev.last_seq;drawLogs()}else if(ev.last_seq<lastSeq){lastSeq=0}
+  $("log_note").textContent=ev.log_capture?"last "+logLines.length+" lines":"log capture is off (API bound to a non-loopback address)";
+  if(ev.solved.length){
+    $("solved").classList.remove("muted");
+    $("solved").innerHTML=ev.solved.slice().reverse().map(e=>`<div style="margin-bottom:10px"><b>Puzzle ${esc(e.puzzle)}</b> solved by <span class="mono">${esc(nodeName(e.solver||"?"))}</span>${e.local_finder?' <span class="pill good">this node</span>':""}<div class="muted mono">${esc(e.solver_address)}</div>${e.payouts.length?`<table style="margin-top:4px"><tr><th>Payout address</th><th>BTC</th></tr>${e.payouts.map(o=>`<tr><td class="mono">${esc(o.address)}</td><td>${(o.sats/1e8).toFixed(8)}</td></tr>`).join("")}</table>`:""}</div>`).join("");
+  }
+  const fb=$("foundbanner");
+  if(s.found_key||ev.solved.length){fb.hidden=false;fb.textContent=s.found_key?"This node found the key. It is saved in the node's found-key file (never shown here).":"Puzzle "+ev.solved[ev.solved.length-1].puzzle+" was solved on the network."}else fb.hidden=true;
+}
+async function mid(){hist=await getJSON("/history");drawHistory()}
+async function slow(){
+  const [k,r]=[await getJSON("/keyspace?buckets=1024"),await getJSON("/rewards")];
+  drawKeyspace(k);drawPayout(r);
+}
+function drawKeyspace(k){
+  const cv=$("ks"),ctx=cv.getContext("2d");
+  if(!k.available){ctx.fillStyle="#181818";ctx.fillRect(0,0,cv.width,cv.height);$("ks_caption").textContent="No puzzle range yet.";$("ks_legend").innerHTML="";$("ks_note").textContent="";return}
+  const fr=k.buckets.fraction,dom=k.buckets.dominant,n=fr.length,side=Math.ceil(Math.sqrt(n)),cell=cv.width/side;
+  const nz=fr.filter(f=>f>0),lo=nz.length?Math.min(...nz):1,linear=!nz.length||lo>=0.05;
+  const level=f=>{if(f<=0)return 0;if(linear)return Math.min(1,f);const l=Math.log10(lo),h=0;return 0.25+0.75*Math.max(0,Math.min(1,(Math.log10(f)-l)/((h-l)||1)))};
+  ctx.fillStyle="rgb(24,24,24)";ctx.fillRect(0,0,cv.width,cv.height);
+  const counts={};
+  for(let i=0;i<n;i++){const f=fr[i],d=dom[i];let c=EMPTY;if(f>0&&d>=0){const p=PALETTE[d%PALETTE.length],t=level(f);c=[EMPTY[0]+(p[0]-EMPTY[0])*t,EMPTY[1]+(p[1]-EMPTY[1])*t,EMPTY[2]+(p[2]-EMPTY[2])*t].map(Math.round);counts[d]=(counts[d]||0)+1}
+    ctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;ctx.fillRect((i%side)*cell,Math.floor(i/side)*cell,Math.ceil(cell),Math.ceil(cell))}
+  const pct=k.percent_searched,ps=pct===0?"0%":pct<0.001?pct.toExponential(2)+"%":pct.toFixed(3)+"%";
+  $("ks_note").textContent="puzzle "+k.puzzle+" · "+fmtInt(k.keys_searched)+" keys ("+ps+")";
+  const covered=nz.length;
+  $("ks_caption").textContent=n+" buckets ("+side+"×"+side+", left to right, top to bottom) · "+covered+" have coverage · colour = dominant contributor, brightness = fraction searched"+(linear?"":" (log scale)")+" · "+fmtInt(k.range_count)+" ranges";
+  const unsearched=n-covered;
+  $("ks_legend").innerHTML=`<span><span class="sw" style="background:rgb(24,24,24)"></span>unsearched (${unsearched})</span>`+k.contributors.map((c,i)=>counts[i]?`<span><span class="sw" style="background:rgb(${PALETTE[i%PALETTE.length].join(",")})"></span><span class="mono">${esc(nodeName(c))}</span> (${counts[i]})</span>`:"").join("");
+}
+function drawPayout(r){
+  const cs=r.chain_split||{},miners=(cs.miners||[]).slice().sort((a,b)=>b.share_percent-a.share_percent),pay=r.payout||{};
+  $("pay_note").textContent=(pay.mode||"")+" · finder "+(pay.finder_percent??"-")+"% / pool "+(pay.contributor_pool_percent!=null?pay.contributor_pool_percent.toFixed(0):"-")+"%";
+  if(!miners.length){$("pay").innerHTML='<div class="muted">No commitments on the best chain yet.</div>';return}
+  const top=Math.max(...miners.map(m=>m.share_percent),1);
+  let h=`<div class="muted" style="font-size:12px;margin-bottom:8px">${fmtInt(cs.total_keys)} keys credited on chain · split source ${esc(pay.split_source||"")}</div><table><tr><th>Miner</th><th style="width:55%">Share of keys <span class="sw" style="background:var(--orange);margin-left:6px"></span> / pool payout if not the finder <span class="sw" style="background:var(--teal);margin-left:6px"></span></th><th>Keys</th></tr>`;
+  for(const m of miners.slice(0,12)){h+=`<tr><td class="mono">${esc(nodeName(m.miner_id))}${m.reward_address_valid?"":' <span class="pill bad">no address</span>'}</td><td><div class="bartrack"><div class="bar" style="width:${(100*m.share_percent/top).toFixed(2)}%"></div><div class="bar pool" style="width:${(100*m.pool_payout_percent/top).toFixed(2)}%"></div></div><div class="muted" style="font-size:12px">${m.share_percent.toFixed(2)}% · pool ${m.pool_payout_percent.toFixed(3)}%</div></td><td>${fmtInt(m.keys)}<div class="muted" style="font-size:12px">${fmtInt(m.commitments)} commits</div></td></tr>`}
+  h+="</table>";
+  const addrs=cs.addresses||[];
+  if(addrs.length){h+=`<h2 style="margin-top:12px">By reward address</h2><table><tr><th>Address</th><th>Share</th><th>Pool payout</th><th>If finder</th></tr>${addrs.map(a=>`<tr><td class="mono">${esc(a.reward_address)}</td><td>${a.share_percent.toFixed(2)}%</td><td>${a.pool_payout_percent.toFixed(2)}%</td><td>${a.payout_percent_if_finder.toFixed(2)}%</td></tr>`).join("")}</table>`}
+  $("pay").innerHTML=h;
+}
+
+function loop(fn,ms){const run=async()=>{try{await fn();failures=0;$("errbanner").hidden=true}catch(e){failures++;if(failures>=2){$("errbanner").hidden=false;$("errbanner").textContent="Cannot reach the node API ("+e.message+"). Is the node still running?";$("state").className="pill bad";$("state").textContent="offline"}}setTimeout(run,ms)};run()}
+loop(fast,2000);loop(mid,5000);loop(slow,30000);
+window.addEventListener("resize",()=>drawHistory());
+</script>
+</body>
+</html>

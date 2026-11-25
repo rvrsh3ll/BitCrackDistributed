@@ -12,6 +12,13 @@ public:
     static void info(const std::string& msg);
     static void warn(const std::string& msg);
     static void error(const std::string& msg);
+
+    // True when debug lines are emitted (skip building costly debug text otherwise).
+    static bool debugEnabled() { return current_level_ <= Level::Debug; }
+    // At most `max` bytes of `s` for a log line; longer text ends with
+    // "...(N bytes)". Peer lines can be hundreds of KB (block lists).
+    static std::string snippet(const std::string& s, size_t max = kSnippetMax);
+    static constexpr size_t kSnippetMax = 120;
     
     // Register a callback to be invoked on each log emission
     // Callback receives (Level, formatted_message) and must be thread-safe

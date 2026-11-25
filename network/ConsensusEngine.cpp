@@ -1,4 +1,5 @@
 #include "ConsensusEngine.h"
+#include "ConsensusRules.h"
 #include "KeyspaceBlock.h"
 #include "HexMath.h"
 
@@ -137,6 +138,9 @@ void ConsensusEngine::setGenesisBlock(const Block& genesis) {
     }
 
     chain_index_.clear();
+    best_chain_.clear();
+    best_pos_.clear();
+    best_tip_.clear();
     ChainEntry entry;
     entry.block = genesis;
     entry.hash = hash;
@@ -146,7 +150,12 @@ void ConsensusEngine::setGenesisBlock(const Block& genesis) {
     genesis_initialized_ = true;
 }
 
-bool ConsensusEngine::addBlock(const Block& block, std::string* error_message) {
+bool ConsensusEngine::hasBlock(const std::string& hash) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return chain_index_.count(normalizeHex(hash)) != 0;
+}
+
+bool ConsensusEngine::addBlock(const Block& block, std::string* error_message, bool trusted_signatures) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     const std::string hash = computeBlockHash(block.header);
@@ -171,6 +180,17 @@ bool ConsensusEngine::addBlock(const Block& block, std::string* error_message) {
     if (normalizeHex(block.header.merkle_root) != normalizeHex(expected_merkle)) {
         if (error_message) *error_message = "Merkle root mismatch";
         return false;
+    }
+
+    if (consensus_v4::activeAt(v4_activation_, block.header.height) && block.header.height > 0) {
+        for (const auto& c : block.commitments) {
+            const std::string why = consensus_v4::checkCommitment(c.start_key, c.end_key, c.keys, c.miner_id, c.attestations,
+                                                                  /*verify_signatures=*/!trusted_signatures);
+            if (!why.empty()) {
+                if (error_message) *error_message = why;  // starts "v4: "
+                return false;
+            }
+        }
     }
 
     const auto now_seconds = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
@@ -241,24 +261,23 @@ std::vector<ConsensusEngine::BlockHeader> ConsensusEngine::getHeadersFrom(
     std::vector<BlockHeader> headers;
     if (!genesis_initialized_) return headers;
 
-    auto chain = collectBestChainLocked();
+    const auto& chain = bestChainLocked();
     if (chain.empty()) return headers;
 
     size_t start_index = 0;
     bool found = false;
     const size_t limit = std::min(max_headers, kMaxHeadersResponse);
 
+    // First locator on our best chain (same result as the old linear scan).
     for (const auto& locator : locator_hashes) {
         const std::string normalized = normalizeHex(locator);
         if (normalized.empty()) continue;
-        for (size_t i = 0; i < chain.size(); ++i) {
-            if (chain[i]->hash == normalized) {
-                start_index = i;
-                found = true;
-                break;
-            }
+        auto pos = best_pos_.find(normalized);
+        if (pos != best_pos_.end()) {
+            start_index = pos->second;
+            found = true;
+            break;
         }
-        if (found) break;
     }
 
     size_t begin = found ? start_index + 1 : 0;
@@ -273,7 +292,7 @@ std::vector<std::string> ConsensusEngine::getInventory(size_t max_hashes) const 
     std::vector<std::string> inventory;
     if (!genesis_initialized_) return inventory;
 
-    auto chain = collectBestChainLocked();
+    const auto& chain = bestChainLocked();
     if (chain.empty()) return inventory;
 
     size_t limit = std::min(max_hashes, static_cast<size_t>(512));
@@ -281,6 +300,14 @@ std::vector<std::string> ConsensusEngine::getInventory(size_t max_hashes) const 
         inventory.push_back(chain[i - 1]->hash);
     }
     return inventory;
+}
+
+std::vector<ConsensusEngine::RangeCommitment> ConsensusEngine::bestChainCommitments() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<RangeCommitment> out;
+    for (const ChainEntry* e : bestChainLocked())
+        out.insert(out.end(), e->block.commitments.begin(), e->block.commitments.end());
+    return out;
 }
 
 ConsensusEngine::ChainSnapshot ConsensusEngine::getChainSnapshot() const {
@@ -376,28 +403,45 @@ std::string ConsensusEngine::normalizeHex(const std::string& hex) {
     return HexMath::normalizeFiltered(hex, HexMath::EmptyAs::Zero);
 }
 
-std::vector<const ConsensusEngine::ChainEntry*> ConsensusEngine::collectBestChainLocked() const {
-    std::vector<const ChainEntry*> chain;
-    if (!genesis_initialized_ || tip_hash_.empty()) return chain;
+const std::vector<const ConsensusEngine::ChainEntry*>& ConsensusEngine::bestChainLocked() const {
+    if (!genesis_initialized_ || tip_hash_.empty()) {
+        best_chain_.clear();
+        best_pos_.clear();
+        best_tip_.clear();
+        return best_chain_;
+    }
+    if (best_tip_ == tip_hash_ && !best_chain_.empty()) return best_chain_;
 
-    std::string cursor = tip_hash_;
+    // Walk back from the new tip until a block already on the cached chain
+    // (the fork point; the old tip itself when the tip was simply extended).
+    std::vector<const ChainEntry*> added;
     std::unordered_set<std::string> visited;
+    size_t keep = 0;  // cached entries [0, keep) stay
+    bool joined = false;
+    std::string cursor = tip_hash_;
     while (!cursor.empty()) {
-        if (!visited.insert(cursor).second) {
-            break; // safeguard against loops
+        auto pos = best_pos_.find(cursor);
+        if (pos != best_pos_.end()) {
+            keep = pos->second + 1;
+            joined = true;
+            break;
         }
+        if (!visited.insert(cursor).second) break;  // safeguard against loops
         auto it = chain_index_.find(cursor);
-        if (it == chain_index_.end()) {
-            break;
-        }
-        chain.push_back(&it->second);
-        if (it->second.block.header.previous_hash.empty()) {
-            break;
-        }
+        if (it == chain_index_.end()) break;
+        added.push_back(&it->second);
+        if (it->second.block.header.previous_hash.empty()) break;
         cursor = normalizeHex(it->second.block.header.previous_hash);
     }
-    std::reverse(chain.begin(), chain.end());
-    return chain;
+    if (!joined) keep = 0;  // no common block: the walk is the whole chain
+    for (size_t i = keep; i < best_chain_.size(); ++i) best_pos_.erase(best_chain_[i]->hash);
+    best_chain_.resize(keep);
+    for (auto it = added.rbegin(); it != added.rend(); ++it) {
+        best_pos_[(*it)->hash] = best_chain_.size();
+        best_chain_.push_back(*it);
+    }
+    best_tip_ = tip_hash_;
+    return best_chain_;
 }
 
 long double ConsensusEngine::difficultyToWork(uint32_t bits) const {
@@ -455,7 +499,7 @@ std::vector<std::string> ConsensusEngine::getLocator() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::string> locator;
     if (!genesis_initialized_) return locator;
-    auto chain = collectBestChainLocked();
+    const auto& chain = bestChainLocked();
     if (chain.empty()) return locator;
     size_t step = 1;
     for (size_t i = chain.size(); i > 0;) {
@@ -565,6 +609,7 @@ bool ConsensusEngine::blockFromKeyspace(const KeyspaceBlock& keyspace_block, Blo
         rc.end_key = c.range_end;
         rc.keys = c.keys_processed;
         rc.miner_id = c.peer_id;
+        rc.attestations = c.attestations;
         block.commitments.push_back(rc);
     }
     return true;
@@ -587,4 +632,14 @@ bool ConsensusEngine::validateBlockHeader(const KeyspaceBlockHeader& header,
     if (header.range_start.empty() || header.range_end.empty()) return false;
     if (header.commit_root.empty()) return false;
     return true;
+}
+
+void ConsensusEngine::setV4ActivationHeight(uint64_t height) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    v4_activation_ = height;
+}
+
+uint64_t ConsensusEngine::v4ActivationHeight() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return v4_activation_;
 }

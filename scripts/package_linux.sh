@@ -6,7 +6,6 @@ set -euo pipefail
 # Env vars:
 #   CONFIG=Release|Debug (default: Release)
 #   DISABLE_CUDA=ON|OFF (default: OFF)
-#   BITCRACK_ENABLE_GUI=ON|OFF (default: ON)
 #   RUN_TESTS=1 to build+run bitcrack_tests
 #   CMAKE_ARGS="..." to pass extra args to CMake configure
 
@@ -14,7 +13,6 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${1:-build_linux}"
 CONFIG="${CONFIG:-Release}"
 DISABLE_CUDA="${DISABLE_CUDA:-OFF}"
-BITCRACK_ENABLE_GUI="${BITCRACK_ENABLE_GUI:-ON}"
 RUN_TESTS_FLAG="${RUN_TESTS:-0}"
 EXTRA_CMAKE_ARGS=${CMAKE_ARGS:-}
 
@@ -23,7 +21,6 @@ mkdir -p "$ROOT_DIR/$BUILD_DIR"
 cmake -S "$ROOT_DIR" -B "$ROOT_DIR/$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE="$CONFIG" \
   -DDISABLE_CUDA="$DISABLE_CUDA" \
-  -DBITCRACK_ENABLE_GUI="$BITCRACK_ENABLE_GUI" \
   $EXTRA_CMAKE_ARGS
 
 cmake --build "$ROOT_DIR/$BUILD_DIR" --config "$CONFIG" --target bitcrack-distributed

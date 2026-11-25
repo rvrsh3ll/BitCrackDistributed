@@ -488,6 +488,24 @@ void WorkCoordinator::setRetiredRanges(const std::vector<std::pair<std::string, 
     next_start_hex_ = skipRetiredLocked(next_start_hex_);
 }
 
+void WorkCoordinator::setChunkSize(uint64_t keys) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const uint64_t n = keys == 0 ? initial_chunk_size_ : keys;
+    chunk_size_ = std::max<uint64_t>(1, n);
+    chunk_size_min_ = chunk_size_;  // stays fixed-size between calls
+    chunk_size_max_ = chunk_size_;
+}
+
+uint64_t WorkCoordinator::chunkSize() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return chunk_size_;
+}
+
+uint64_t WorkCoordinator::baseChunkSize() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return initial_chunk_size_;
+}
+
 uint64_t WorkCoordinator::getTotalChunks() const {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initialized_) return 0;

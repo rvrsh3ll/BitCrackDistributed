@@ -114,8 +114,9 @@ correctness evidence.
 
 **Advanced here:** `Launch gates` runs Linux CPU Release and ASan non-hidden
 tests plus the existing two-node search/shutdown smoke on PRs, and a gating
-`Windows CPU` lane (MSVC, `DISABLE_CUDA=ON`, GUI off) that builds and runs the
-full non-hidden suite plus a CLI derive/bench smoke; the manual `CI` matrix no
+Windows lane (`windows.yml`: MSVC, `DISABLE_CUDA=ON`, console exe only since the Qt GUI was removed, OpenSSL 3
+via vcpkg) that builds and runs the full non-hidden suite, smoke-tests the
+packaged exes and uploads a zip; the manual `CI` matrix no
 longer tolerates Windows test failures (`continue-on-error` removed). Nightly
 TSan runs focused persistence, restart, claim/lease, engine-switch and shutdown
 tests. Manual dispatch runs all three Linux jobs. Failures propagate, jobs have
@@ -126,9 +127,9 @@ deadlines, and test/smoke diagnostics are retained for seven days.
   repository rules to require them (workflow YAML alone is not branch protection).
 - [ ] Resolve every nightly race or sanitizer-runtime failure; no blanket
   suppressions or `continue-on-error`. Require a clean nightly on release SHA.
-- [ ] Restore macOS validation and add real-hardware GPU gates (Windows is now
-      wired as a gating `Windows CPU` lane; record its first green run on the
-      release SHA).
+- [ ] Restore macOS validation and add real-hardware GPU gates (Windows CPU +
+      GUI was green in CI on 2026-11-20, before the GUI was removed; record a green run on
+      the release SHA).
 - [ ] Run mixed-version smoke against the last approved release binary.
 
 **Triggers (2026-11-18):** all workflows (`CI`, `Launch gates`, `Release`) are
@@ -139,20 +140,30 @@ ref so `github.ref_name` is the tag. The PR, nightly and pushed-tag behaviour
 described above now happens only when someone starts a run by hand.
 
 **Open workflow issues (2026-11-18):**
-- **`Windows CPU` lane vs OpenSSL 4.** Chocolatey now installs OpenSSL 4.1.0, and
-  the bundled asio 1.30.2 `asio/ssl/impl/rfc2818_verification.ipp` doesn't
-  compile against it: OpenSSL 4 makes `ASN1_STRING` (`asn1_string_st`)
-  opaque and returns `const X509*`. Fix options: pin OpenSSL 3.x in the job
-  (e.g. `choco install openssl --version=3.x` or vcpkg), or move to an asio
-  release that supports OpenSSL 4.
+- **Windows lane: fixed (2026-11-20).** Chocolatey's OpenSSL 4.1.0 broke the
+  bundled asio 1.30.2 (`asn1_string_st` undefined). The Windows job now lives in
+  the manual-only `.github/workflows/windows.yml` (also called by `Launch
+  gates`): OpenSSL 3.6.5 pinned via the vcpkg manifest (`vcpkg.json`
+  baseline = the workflow's `VCPKG_COMMIT`), Qt 6.8.3 GUI on at the time (the GUI has since been removed), full
+  `bitcrack_tests` run, packaged-exe smoke from a clean PATH (console
+  derive/bench, GUI `--version`, GUI started offscreen for 20 s with P2P off),
+  and a zip artifact `bitcrack-distributed-windows-x64`. First green run:
+  2026-11-20 (226 of 226 test cases passed on Windows; the POSIX-only socket tests are compiled out there). MSVC-only fixes that came with it: the GUI exe
+  keeps a redirected stdout instead of rebinding to the parent console, and
+  several tests were made to build/run on Windows.
+- **`TSan focused` lane on hosted Ubuntu 22.04 (GCC 11).** It reports
+  "double lock of a mutex" in the test helper `tests/support/StallAwareTimer.h:78`
+  (`wall()` called from `effective()`, via `test_engine_target_swap.cpp`). This was
+  already failing before the Windows work. Local TSan (GCC 14) is clean. Open.
 - **`ASan` lane, one flaky test on hosted runners.** `tests/test_network_loopback.cpp:166`
   `CHECK(b_sees_a)` fails with `AUTH KEY MISMATCH` for alias `Anonymous`. The
   test's two nodes have no `node_uuid` and no reward address, so **both use the
   alias `Anonymous`**. Node A then rejects B for presenting A's own alias with
   another key. (Each node has its own temp data dir, so this is not a stale
   pin file.) On fast machines the check sees the connection before the
-  rejection, which is why it passes locally. Fix: give the test nodes distinct
-  `node_uuid`s (open).
+  rejection, which is why it passes locally. Fixed: a node with no uuid now
+  takes its alias from its node key (12 hex chars of SHA-256 of the public
+  key), so the two test nodes get distinct aliases.
 
 Scope/TODO: hidden `[.regtest]` tests require a funded isolated Bitcoin Core
 regtest fixture and remain operator-invoked. Longer mixed-version, full TSan,
@@ -167,7 +178,7 @@ Local equivalent (set `REPO` to an absolute checkout path):
 REPO=/absolute/path/to/BitCrackDistributed
 BUILD=/tmp/bitcrack-launch-release
 cmake -S "$REPO" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DDISABLE_CUDA=ON -DBITCRACK_ENABLE_GUI=OFF \
+  -DDISABLE_CUDA=ON \
   -DBITCRACK_COPY_BUILD_TO_DIST=OFF -DBITCRACK_BUILD_TESTS=ON
 cmake --build "$BUILD" --target bitcrack_tests logger_file_runner --parallel 2
 (cd "$BUILD/Release" && ./bitcrack_tests '[restart],[workstate_hydration],[pr27]')

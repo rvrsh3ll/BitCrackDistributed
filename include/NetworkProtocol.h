@@ -39,6 +39,7 @@ enum class MessageVerb {
     GenesisBlock,       // P2P: Share genesis block for synchronization (height|previous_hash|merkle_root|timestamp|bits|nonce)
     GenesisAck,         // P2P: Acknowledge genesis block acceptance (genesis_hash)
     Commit,             // P2P: Announce a commitment (range_id|start|end|keys|proof)
+    CommitAttestation,  // P2P (consensus v4): a node vouches for another node's commitment (JSON)
     // Key-claim and MPC verbs
     KeyClaimRequest,    // Request to claim a puzzle key (finder|reward_addr)
     KeyClaimChallenge,  // Nonce + utxo to prove ownership (nonce|utxo|deadline)
@@ -86,6 +87,7 @@ inline std::string verbToString(MessageVerb verb) {
         case MessageVerb::GenesisBlock: return "GENESISBLOCK";
         case MessageVerb::GenesisAck: return "GENESISACK";
         case MessageVerb::Commit: return "COMMIT";
+        case MessageVerb::CommitAttestation: return "COMMITATT";
             case MessageVerb::KeyClaimRequest: return "KEYCLAIMREQ";
             case MessageVerb::KeyClaimChallenge: return "KEYCLAIMCHALLENGE";
             case MessageVerb::KeyProof: return "KEYPROOF";
@@ -138,6 +140,7 @@ inline MessageVerb parseVerb(const std::string& token) {
     if (normalized == "GENESISBLOCK") return MessageVerb::GenesisBlock;
     if (normalized == "GENESISACK") return MessageVerb::GenesisAck;
     if (normalized == "COMMIT") return MessageVerb::Commit;
+    if (normalized == "COMMITATT") return MessageVerb::CommitAttestation;
     if (normalized == "KEYCLAIMREQ") return MessageVerb::KeyClaimRequest;
     if (normalized == "KEYCLAIMCHALLENGE") return MessageVerb::KeyClaimChallenge;
     if (normalized == "KEYPROOF") return MessageVerb::KeyProof;

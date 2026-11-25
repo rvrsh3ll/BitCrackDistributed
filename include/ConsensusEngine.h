@@ -22,6 +22,8 @@ public:
         std::string end_key;
         uint64_t keys = 0;
         std::string miner_id;
+        // v4 (ConsensusRules.h); not part of the Merkle root.
+        std::vector<CommitAttestation> attestations;
     };
 
     struct BlockHeader {
@@ -55,7 +57,16 @@ public:
 
     // Proof-of-work style consensus helpers
     void setGenesisBlock(const Block& genesis);
-    bool addBlock(const Block& block, std::string* error_message = nullptr);
+    // Consensus v4 rules apply to blocks at or above this height (0: never).
+    void setV4ActivationHeight(uint64_t height);
+    uint64_t v4ActivationHeight() const;
+    // trusted_signatures: the block comes from this node's own chainstore,
+    // inside its integrity-checked verified prefix (KeyspaceChainStore), so
+    // the v4 attestation signatures are not verified again; every other check
+    // (PoW, Merkle root, linkage, height, timestamp, v4 rules incl. the
+    // attestation count and format) still is. Never set for peer blocks.
+    bool addBlock(const Block& block, std::string* error_message = nullptr, bool trusted_signatures = false);
+    bool hasBlock(const std::string& hash) const;
     bool addKeyspaceBlock(const KeyspaceBlock& keyspace_block, std::string* error_message = nullptr);
     // The Block addKeyspaceBlock would add (validated, nonce mined).
     static bool blockFromKeyspace(const KeyspaceBlock& keyspace_block, Block& out,
@@ -67,6 +78,9 @@ public:
                                             size_t max_headers = 2000) const;
     std::vector<std::string> getInventory(size_t max_hashes = 64) const;
     ChainSnapshot getChainSnapshot() const;
+    // Every range commitment on the best chain, genesis first (a copy taken
+    // under the lock; read-only views such as the stats API use it).
+    std::vector<RangeCommitment> bestChainCommitments() const;
 
     static std::string computeMerkleRoot(const std::vector<RangeCommitment>& commitments);
     static std::string computeBlockHash(const BlockHeader& header);
@@ -98,7 +112,10 @@ private:
     static std::string targetFromBits(uint32_t bits);
     static bool hashMeetsTarget(const std::string& hash_hex, const std::string& target_hex);
     static std::string normalizeHex(const std::string& hex);
-    std::vector<const ChainEntry*> collectBestChainLocked() const;
+    // Best chain genesis..tip, cached: extended by one entry when a block
+    // extends the tip, re-walked only back to the fork point on a reorg.
+    // Header paging used to walk the whole chain twice per 64-block page.
+    const std::vector<const ChainEntry*>& bestChainLocked() const;
     static std::string doubleSha256String(const std::string& data);
 
     Config config_;
@@ -110,5 +127,11 @@ private:
     // Chain state
     std::unordered_map<std::string, ChainEntry> chain_index_;
     std::string tip_hash_;
+    // bestChainLocked() cache: entries point into chain_index_ (nodes are
+    // stable; entries are only removed by initializeGenesis, which resets it).
+    mutable std::vector<const ChainEntry*> best_chain_;
+    mutable std::unordered_map<std::string, size_t> best_pos_;  // hash -> index in best_chain_
+    mutable std::string best_tip_;
     bool genesis_initialized_ = false;
+    uint64_t v4_activation_ = 0;
 };

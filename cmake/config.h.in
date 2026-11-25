@@ -6,15 +6,26 @@
 #define PROJECT_VERSION_PATCH @PROJECT_VERSION_PATCH@
 #define PROJECT_VERSION "@PROJECT_VERSION@"
 
-// Feature availability
+// Feature availability (targets also pass these as -D; guard against
+// "redefined" warnings)
+#ifndef CUDA_AVAILABLE
 #cmakedefine CUDA_AVAILABLE
+#endif
+#ifndef OPENCL_AVAILABLE
 #cmakedefine OPENCL_AVAILABLE
-#cmakedefine GUI_AVAILABLE
+#endif
 
-// Platform definitions
+// Platform definitions (also passed as -D on the command line by the top-level
+// CMakeLists; guard so the two do not trigger "redefined" warnings)
+#ifndef WINDOWS
 #cmakedefine WINDOWS
+#endif
+#ifndef MACOS
 #cmakedefine MACOS
+#endif
+#ifndef LINUX
 #cmakedefine LINUX
+#endif
 
 // Build timestamp
 #define BUILD_TIMESTAMP __DATE__ " " __TIME__

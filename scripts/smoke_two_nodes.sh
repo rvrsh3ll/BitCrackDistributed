@@ -44,6 +44,27 @@
 #        rejections, strikes or disconnects. BLOCK_TIMEOUT (120).
 #        The other node must then verify the finder's KEYPROOF and
 #        leave puzzle 72.
+#        BIG_CHUNKS=1: node A sizes its chunks by its measured rate
+#        (network.chunk_sizing "always", chunk_target_s BIG_TARGET_S (30)) as
+#        a GPU node does, so its chunks grow past the fixed 10M keys. Node B
+#        (any binary, e.g. BIN_B=<the seeds' build>) must approve them, record
+#        A's CHUNKDONE and COMMIT with the larger key count and credit it,
+#        with no strikes or rejections. BIG_TIMEOUT (180).
+#        V4=1: both configs set network.consensus_v4_height V4_HEIGHT (3)
+#        (an older BIN_B ignores it). Same binary: past the activation height
+#        each node mints its blocks only with the other's COMMITATT
+#        attestation, both chains pass V4_HEIGHT+V4_EXTRA (3), and no block is
+#        rejected. Mixed (BIN_B older): A reaches the activation height, then
+#        rejects B's unattested blocks ("v4:", no strike), B keeps crediting
+#        A's CHUNKDONEs and both keep getting chunks. V4_TIMEOUT (180).
+#        API=1: node A serves the stats API on 127.0.0.1:API_PORT (3339).
+#        Once a KeyspaceBlock is stored, /keyspace?buckets=64,
+#        /keyspace/ranges and /rewards must describe the searched ranges
+#        (inside the puzzle range, buckets adding up to keys_searched) and
+#        both nodes' reward addresses and shares. Works with BIN_B.
+#        It also fetches the HTML dashboard at / (text/html with a CSP, no
+#        external resources), /history /system /events with live data, and
+#        checks a non-loopback Host header is refused (403).
 set -u
 
 BIN="${1:-build/Release/bitcrack-distributed}"
@@ -142,6 +163,20 @@ if [[ "$SOLVED" == "1" ]]; then
 fi
 write_config "$WORK/a" "$PORT_A" '[]' "$REWARD_A" "11111111-1111-4111-8111-111111111111"
 write_config "$WORK/b" "$PORT_B" "[\"127.0.0.1:$PORT_A\"]" "$REWARD_B" "22222222-2222-4222-8222-222222222222"
+if [[ "${BIG_CHUNKS:-0}" == "1" ]]; then
+    sed -i 's/^    "enable_p2p": true,$/    "enable_p2p": true,\n    "chunk_sizing": "always", "chunk_target_s": '"${BIG_TARGET_S:-30}"',/' "$WORK/a/config.json"
+    grep -q '"chunk_sizing": "always"' "$WORK/a/config.json" || { echo "FAIL: could not set chunk_sizing for node A" >&2; exit 2; }
+fi
+if [[ "${V4:-0}" == "1" ]]; then
+    for n in a b; do
+        sed -i 's/^    "enable_p2p": true,$/    "enable_p2p": true,\n    "consensus_v4_height": '"${V4_HEIGHT:-3}"',/' "$WORK/$n/config.json"
+        grep -q '"consensus_v4_height"' "$WORK/$n/config.json" || { echo "FAIL: could not set consensus_v4_height for node $n" >&2; exit 2; }
+    done
+fi
+if [[ "${API:-0}" == "1" ]]; then
+    sed -i 's|^  "data_directory": |  "api_enabled": true, "api_bind": "127.0.0.1:'"${API_PORT:-3339}"'",\n  "data_directory": |' "$WORK/a/config.json"
+    grep -q '"api_enabled": true' "$WORK/a/config.json" || { echo "FAIL: could not enable the API for node A" >&2; exit 2; }
+fi
 DUMMY_KEY="4848484848484848484848484848484848484848484848484848484848484848"
 if [[ "$SOLVED" == "1" ]]; then
     if [[ $MIXED -eq 1 ]]; then echo "FAIL: SOLVED=1 needs both nodes on the same (new) binary" >&2; exit 2; fi
@@ -243,9 +278,12 @@ if [[ $MIXED -eq 0 ]]; then
     grep -q '"222222222222"' "$WORK/a/known_peers.json" 2>/dev/null || fail "node A did not pin B's key"
     grep -q '"111111111111"' "$WORK/b/known_peers.json" 2>/dev/null || fail "node B did not pin A's key"
     echo "auth: A and B authenticated each other; keys pinned in known_peers.json"
+elif grep -q "Peer 222222222222 authenticated" "$WORK/a/out.log"; then
+    # An older build that already has peer authentication (e.g. the seeds').
+    grep -q "Peer 111111111111 authenticated" "$WORK/b/out.log" || fail "older node B with peer auth did not authenticate A"
+    echo "auth: B is an older build with peer authentication; A and B authenticated each other"
 else
     grep -q "Peer 222222222222 sent no AUTH within" "$WORK/a/out.log" || fail "node A did not treat old node B as an older peer"
-    grep -q "Peer 222222222222 authenticated" "$WORK/a/out.log" && fail "node A claims to have authenticated old node B"
     echo "auth: B is an older node; A treated it as an older peer and both searched"
 fi
 # Honest nodes never have a CHUNKDONE or CONTRIB rejected for its signing key.
@@ -290,6 +328,174 @@ if [[ "$SOLVED" == "1" ]]; then
     echo "proof: node $OTHER verified the key proof and left puzzle 72 ($(grep -m1 -o 'Leaving solved puzzle 72 for puzzle [0-9]*' "$WORK/$OTHER/out.log"))"
 fi
 echo "strikes: A=$(grep -c " strike [0-9]" "$WORK/a/out.log") B=$(grep -c " strike [0-9]" "$WORK/b/out.log")"
+if [[ "${V4:-0}" == "1" ]]; then
+    V4H="${V4_HEIGHT:-3}"
+    v4_tip() { grep -h -oE "(Chain tip updated: new_tip=[0-9A-F]+ height=|Block sync: tip now [0-9A-F]+ height )[0-9]+" "$1" 2>/dev/null |
+               grep -oE "[0-9]+$" | sort -n | tail -n 1 | grep . || echo 0; }
+    approved() { grep -c "\[ENGINE\] Search range set to" "$1" 2>/dev/null || true; }
+    grep -q "Consensus v4 rules activate at block height $V4H " "$WORK/a/out.log" || fail "node A did not log the v4 activation height $V4H"
+    deadline_start "${V4_TIMEOUT:-180}"
+    if [[ $MIXED -eq 0 ]]; then
+        want=$(( V4H + ${V4_EXTRA:-3} ))
+        until (( $(v4_tip "$WORK/a/out.log") >= want && $(v4_tip "$WORK/b/out.log") >= want )) &&
+              grep -q "Consensus v4: minted KeyspaceBlock" "$WORK/a/out.log" &&
+              grep -q "Consensus v4: minted KeyspaceBlock" "$WORK/b/out.log"; do
+            kill -0 "$PID_A" 2>/dev/null || fail "node A exited before v4 blocks"
+            kill -0 "$PID_B" 2>/dev/null || fail "node B exited before v4 blocks"
+            deadline_left || fail "v4: heights A=$(v4_tip "$WORK/a/out.log") B=$(v4_tip "$WORK/b/out.log") (want $want) or no attested block minted within ${V4_TIMEOUT:-180}s"
+            sleep 0.5
+        done
+        for n in a b; do
+            grep -q "not added: v4:" "$WORK/$n/out.log" && fail "node $n rejected a block under v4: $(grep -m1 'not added: v4:' "$WORK/$n/out.log")"
+            grep -q "Failed to add KeyspaceBlock" "$WORK/$n/out.log" && fail "node $n failed to add a block: $(grep -m1 'Failed to add KeyspaceBlock' "$WORK/$n/out.log")"
+        done
+        echo "v4: both nodes past height $want; attested blocks: A=$(grep -c 'Consensus v4: minted KeyspaceBlock' "$WORK/a/out.log") B=$(grep -c 'Consensus v4: minted KeyspaceBlock' "$WORK/b/out.log"), attestations seen in A's blocks: $(grep -m1 -oE 'with [0-9]+ attestation' "$WORK/a/out.log")"
+    else
+        # Old B self-mints; past the activation A rejects those blocks
+        # without a strike and keeps searching.
+        until grep -q "not added: v4:" "$WORK/a/out.log"; do
+            kill -0 "$PID_A" 2>/dev/null || fail "node A exited before rejecting an unattested block"
+            kill -0 "$PID_B" 2>/dev/null || fail "node B exited"
+            deadline_left || fail "mixed v4: node A (height $(v4_tip "$WORK/a/out.log")) never rejected B's unattested block within ${V4_TIMEOUT:-180}s"
+            sleep 0.5
+        done
+        before_a=$(approved "$WORK/a/out.log"); before_b_done=$(grep -c "CHUNKDONE PROCESSED: chunk=[^ ]* peer=111111111111 .*already_done=no" "$WORK/b/out.log")
+        deadline_start "${V4_TIMEOUT:-180}"
+        until (( $(approved "$WORK/a/out.log") > before_a )) &&
+              (( $(grep -c "CHUNKDONE PROCESSED: chunk=[^ ]* peer=111111111111 .*already_done=no" "$WORK/b/out.log") > before_b_done )); do
+            kill -0 "$PID_A" 2>/dev/null || fail "node A exited after activation"
+            kill -0 "$PID_B" 2>/dev/null || fail "node B exited after activation"
+            deadline_left || fail "mixed v4: after activation A got no chunk approved or B credited no CHUNKDONE of A"
+            sleep 0.5
+        done
+        grep -q "Consensus v4: waiting for 1 attestation" "$WORK/a/out.log" || fail "mixed v4: node A did not wait for an attestation"
+        for n in a b; do
+            (( $(grep -c " strike [0-9]" "$WORK/$n/out.log") == 0 )) || fail "mixed v4: node $n struck a peer: $(grep -m1 ' strike [0-9]' "$WORK/$n/out.log")"
+        done
+        echo "mixed v4: A rejected $(grep -c 'not added: v4:' "$WORK/a/out.log") unattested block(s) of old B without a strike; both kept searching and B kept crediting A"
+    fi
+fi
+if [[ "${BIG_CHUNKS:-0}" == "1" ]]; then
+    # A completion of A's with more than the fixed 10M keys, as B saw it.
+    big_done_b() { grep -oE "CHUNKDONE PROCESSED: chunk=[^ ]+ peer=111111111111 range=[0-9A-Fa-f]+-[0-9A-Fa-f]+ keys=[0-9]+ already_done=no" "$WORK/b/out.log" 2>/dev/null |
+                   awk -F'keys=' '{ split($2, k, " "); if (k[1] + 0 > 10000000) { print; exit } }'; }
+    deadline_start "${BIG_TIMEOUT:-180}"
+    until [[ -n "$(big_done_b)" ]]; do
+        kill -0 "$PID_A" 2>/dev/null || fail "node A exited before a sized chunk was done"
+        kill -0 "$PID_B" 2>/dev/null || fail "node B exited before a sized chunk was done"
+        deadline_left || fail "node B recorded no CHUNKDONE of node A with more than 10M keys within ${BIG_TIMEOUT:-180}s"
+        sleep 0.5
+    done
+    BIG_LINE="$(big_done_b)"
+    BIG_KEYS="${BIG_LINE##*keys=}"; BIG_KEYS="${BIG_KEYS%% *}"
+    BIG_RANGE="$(echo "$BIG_LINE" | grep -oE 'range=[0-9A-Fa-f]+-[0-9A-Fa-f]+')"; BIG_RANGE="${BIG_RANGE#range=}"
+    grep -q "Chunk sizing: CPU node at .* claiming chunks of" "$WORK/a/out.log" || fail "node A did not log its chunk sizing"
+    grep -q "Started working on approved chunk: .* (${BIG_RANGE%-*} - ${BIG_RANGE#*-})" "$WORK/a/out.log" ||
+        fail "node A did not search the sized chunk $BIG_RANGE as an approved claim"
+    # B credits it (keys) and gets A's COMMIT for it; give the COMMIT a moment.
+    deadline_start 30
+    until grep -q "Received COMMIT from 111111111111: $BIG_RANGE keys=$BIG_KEYS" "$WORK/b/out.log"; do
+        deadline_left || fail "node B did not receive A's COMMIT for $BIG_RANGE keys=$BIG_KEYS"
+        sleep 0.2
+    done
+    grep -q "CHUNKDONE RECORDED KEYS: peer=111111111111 keys=$BIG_KEYS" "$WORK/b/out.log" ||
+        grep -q "CONTRIB VERIFIED: peer=111111111111 keys=$BIG_KEYS" "$WORK/b/out.log" ||
+        fail "node B did not credit A's $BIG_KEYS keys"
+    for n in a b; do
+        grep -qE "CHUNKDONE REJECTED|CONTRIB REJECTED" "$WORK/$n/out.log" && fail "node $n rejected a completion with sized chunks"
+        grep -q "Rejecting chunk claim from" "$WORK/$n/out.log" && fail "node $n rejected a chunk claim: $(grep -m1 'Rejecting chunk claim from' "$WORK/$n/out.log")"
+    done
+    [[ $(grep -c " strike [0-9]" "$WORK/b/out.log") -eq 0 ]] || fail "node B struck A with sized chunks: $(grep -m1 ' strike [0-9]' "$WORK/b/out.log")"
+    echo "big chunks: B approved, recorded and credited A's chunk $BIG_RANGE with $BIG_KEYS keys (fixed size 10000000); COMMIT received; no strikes"
+fi
+if [[ "${API:-0}" == "1" ]]; then
+    API_URL="http://127.0.0.1:${API_PORT:-3339}"
+    grep -q "API: listening on http://127.0.0.1:${API_PORT:-3339}" "$WORK/a/out.log" || fail "node A did not start the stats API"
+    deadline_start "${BLOCK_TIMEOUT:-120}"
+    until grep -q "Stored KeyspaceBlock" "$WORK/a/out.log"; do
+        deadline_left || fail "node A stored no KeyspaceBlock within ${BLOCK_TIMEOUT:-120}s (API check)"
+        sleep 0.5
+    done
+    sleep 2
+    for ep in "keyspace?buckets=64" "keyspace/ranges?limit=10000" "rewards"; do
+        curl -sf --max-time 10 "$API_URL/$ep" >"$WORK/api_$(echo "${ep%%\?*}" | tr / _).json" || fail "GET /$ep failed"
+    done
+    API_SUMMARY="$(python3 - "$WORK" "$REWARD_A" "$REWARD_B" <<'PY'
+import json, sys
+work, ra, rb = sys.argv[1:4]
+k = json.load(open(f"{work}/api_keyspace.json"))
+r = json.load(open(f"{work}/api_keyspace_ranges.json"))
+w = json.load(open(f"{work}/api_rewards.json"))
+def die(m): print("FAIL: " + m); sys.exit(1)
+if not k.get("available"): die("/keyspace not available")
+lo, hi = int(k["range_start"], 16), int(k["range_end"], 16)
+if int(k["keyspace_keys"]) != hi - lo + 1: die("keyspace_keys != range size")
+searched = int(k["keys_searched_decimal"])
+if searched <= 0 or k["range_count"] < 1: die("nothing searched in /keyspace")
+if k["bucket_count"] != 64 or len(k["buckets"]["fraction"]) != 64: die("bucket grid size")
+grid = sum(k["buckets"]["fraction"]) * int(k["bucket_keys"])
+if abs(grid - searched) > searched * 1e-6 + 64: die(f"buckets add up to {grid}, keys_searched {searched}")
+if r["total"] != k["range_count"]: die("/keyspace/ranges total != range_count")
+tot, prev = 0, -1
+for x in r["ranges"]:
+    s, e = int(x["start"], 16), int(x["end"], 16)
+    if not (lo <= s <= e <= hi) or s <= prev: die(f"bad range {x}")
+    if x["keys"] != e - s + 1: die(f"keys of {x}")
+    tot += x["keys"]; prev = e
+if tot != searched: die(f"ranges sum {tot} != keys_searched {searched}")
+peers = {p["id"]: p for p in w["peers"]}
+if w["payout"]["mode"] != "direct": die("payout mode")
+for alias, addr in (("111111111111", ra), ("222222222222", rb)):
+    p = peers.get(alias)
+    if not p or p["reward_address"] != addr or p["keys_checked"] <= 0 or p["share_percent"] <= 0: die(f"/rewards entry for {alias}: {p}")
+if abs(sum(p["share_percent"] for p in w["peers"]) - 100) > 1e-6: die("shares do not add up to 100%")
+addrs = {a["reward_address"] for a in w["addresses"]}
+if not {ra, rb} <= addrs: die("addresses aggregate misses a node")
+cs = w.get("chain_split") or {}
+if w["payout"].get("split_source") != "best_chain" or cs.get("total_keys", 0) <= 0: die(f"chain split: {w['payout'].get('split_source')} {cs.get('total_keys')}")
+if cs["total_keys"] > searched: die("chain split counts more keys than were searched")
+want = {"111111111111": ra, "222222222222": rb}
+for m in cs["miners"]:
+    if m["miner_id"] in want and m["reward_address"] != want[m["miner_id"]]: die(f"chain split address of {m}")
+if abs(sum(m["share_percent"] for m in cs["miners"]) - 100) > 1e-6: die("chain split shares do not add up to 100%")
+print(f"searched {searched} keys in {k['range_count']} ranges ({k['percent_searched']:.3g}%), "
+      f"{len(w['peers'])} peers, shares " + ", ".join(f"{p['id']}={p['share_percent']:.1f}%" for p in w["peers"]) +
+      "; chain split " + ", ".join(f"{m['miner_id']}={m['share_percent']:.1f}%" for m in cs["miners"]))
+PY
+)" || fail "stats API check: $API_SUMMARY"
+    echo "api: $API_SUMMARY"
+    # The HTML dashboard: served at / from the binary, nothing external, and
+    # the endpoints it renders answer with live data.
+    grep -q "Dashboard: http://127.0.0.1:${API_PORT:-3339}/" "$WORK/a/out.log" || fail "node A did not print the dashboard URL"
+    curl -sf --max-time 10 -D "$WORK/dash_headers.txt" "$API_URL/" >"$WORK/dashboard.html" || fail "GET / (dashboard) failed"
+    grep -qi '^Content-Type: text/html' "$WORK/dash_headers.txt" || fail "dashboard is not text/html"
+    grep -qi '^Content-Security-Policy: default-src' "$WORK/dash_headers.txt" || fail "dashboard has no Content-Security-Policy"
+    grep -q '<title>BitCrack Distributed dashboard</title>' "$WORK/dashboard.html" || fail "dashboard page content"
+    if grep -Eiq '(src|href)="(https?:)?//' "$WORK/dashboard.html"; then fail "dashboard loads an external resource"; fi
+    for ep in history system "events?since=0" status peers chunks; do
+        curl -sf --max-time 10 "$API_URL/$ep" >"$WORK/dash_$(echo "${ep%%\?*}").json" || fail "GET /$ep failed"
+    done
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H 'Host: rebind.example:3339' "$API_URL/status")
+    [[ "$code" == "403" ]] || fail "a non-loopback Host header got HTTP $code, want 403"
+    DASH_SUMMARY="$(python3 - "$WORK" <<'PY'
+import json, sys
+work = sys.argv[1]
+def j(n): return json.load(open(f"{work}/dash_{n}.json"))
+def die(m): print("FAIL: " + m); sys.exit(1)
+h, sy, ev, st, pe = j("history"), j("system"), j("events"), j("status"), j("peers")
+if h["fields"][:4] != ["t_ms", "keys_per_second", "height", "peers"]: die(f"history fields {h['fields']}")
+if len(h["points"]) < 2: die(f"history has {len(h['points'])} points")
+if max(p[1] for p in h["points"]) <= 0: die("history never saw a non-zero rate")
+if h["points"][-1][3] < 1: die("history: last point has no peers")
+if sy["cpu_workers"] < 1 or sy["gpu_only"] is not False or not isinstance(sy["gpu_devices"], list): die(f"system {sy}")
+if not ev["log_capture"] or not ev["logs"] or ev["last_seq"] < len(ev["logs"]): die("events: no captured log lines")
+if not any("Dashboard: http://" in l["msg"] for l in ev["logs"]): die("events: dashboard line not in the captured log")
+if pe["count"] < 1 or st["peer_count"] < 1: die("no peers in /peers")
+print(f"{len(h['points'])} history points, {len(ev['logs'])} log lines, cpu_workers {sy['cpu_workers']}, peers {pe['count']}")
+PY
+)" || fail "dashboard check: $DASH_SUMMARY"
+    echo "dashboard: $DASH_SUMMARY"
+fi
 if [[ "${RESTART_KEEP_STATE:-0}" == "1" || "${LATE_JOINER:-0}" == "1" ]]; then
     # Restart both nodes (one at a time) with their data directories
     # (chainstore.bin/meta, workstate, ledger) kept. The persisted chain must
