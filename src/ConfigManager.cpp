@@ -1,4 +1,5 @@
 #include "WorkState.h"
+#include "PlatformPaths.h"
 #include "ConfigManager.h"
 #include "AddressGenerator.h"
 #include "RewardAddress.h"
@@ -230,6 +231,7 @@ void ConfigManager::toJson(const Config& config, std::string& json) const {
     j["reward_address"] = config.reward_address;
     j["api_enabled"] = config.api_enabled;
     j["api_bind"] = config.api_bind;
+    j["tls_ca_file"] = config.tls_ca_file;
     j["api_allow_remote"] = config.api_allow_remote;
     j["api_puzzle_balance"] = config.api_puzzle_balance;
     j["api_puzzle_balance_interval_s"] = config.api_puzzle_balance_interval_s;
@@ -354,6 +356,7 @@ bool ConfigManager::fromJson(const std::string& json, Config& config) const {
         config.reward_address = j.value("reward_address", config.reward_address);
         config.api_enabled = j.value("api_enabled", config.api_enabled);
         config.api_bind = j.value("api_bind", config.api_bind);
+        config.tls_ca_file = j.value("tls_ca_file", config.tls_ca_file);
         config.api_allow_remote = j.value("api_allow_remote", config.api_allow_remote);
         config.api_puzzle_balance = j.value("api_puzzle_balance", config.api_puzzle_balance);
         config.api_puzzle_balance_interval_s =
@@ -560,10 +563,10 @@ std::string ConfigManager::getPlatformConfigPath() const {
         return std::string(home) + "/Library/Application Support/BitCrackDistributed/config.json";
     }
     return "config.json";
-#else // LINUX
-    char* home = getenv("HOME");
-    if (home) {
-        return std::string(home) + "/.config/BitCrackDistributed/config.json";
+#else // LINUX (and Android; see PlatformPaths.h)
+    const std::string home = platform_paths::homeDir();
+    if (!home.empty()) {
+        return home + "/.config/BitCrackDistributed/config.json";
     }
     return "config.json";
 #endif
@@ -582,10 +585,10 @@ std::string ConfigManager::getPlatformDataPath() const {
         return std::string(home) + "/Library/Application Support/BitCrackDistributed/";
     }
     return "";
-#else // LINUX
-    char* home = getenv("HOME");
-    if (home) {
-        return std::string(home) + "/.local/share/BitCrackDistributed/";
+#else // LINUX (and Android; see PlatformPaths.h)
+    const std::string home = platform_paths::homeDir();
+    if (!home.empty()) {
+        return home + "/.local/share/BitCrackDistributed/";
     }
     return "";
 #endif

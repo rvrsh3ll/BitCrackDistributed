@@ -203,7 +203,8 @@ option(BITCRACK_COPY_BUILD_TO_DIST "Copy built binaries to dist directory during
 include(FetchContent)
 FetchContent_Declare(
     nlohmann_json
-    URL https://github.com/nlohmann/json/releases/download/v3.11.2/json.hpp
+    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp
+    URL_HASH SHA256=9bea4c8066ef4a1c206b2be5a36302f8926f7fdc6087af5d20b417d0cf103ea6
     DOWNLOAD_NO_EXTRACT TRUE
 )
 FetchContent_GetProperties(nlohmann_json)

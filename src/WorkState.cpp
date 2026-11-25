@@ -1,4 +1,5 @@
 #include "WorkState.h"
+#include "PlatformPaths.h"
 #include "Logger.h"
 #include "json.hpp"
 #include "KeyspaceBlock.h"
@@ -298,9 +299,11 @@ std::string WorkState::defaultDataDir() {
     }
     return std::string(".");
 #else
-    char* home = getenv("HOME");
-    if (home) {
-        return std::string(home) + "/.local/share/BitCrackDistributed/";
+    // Linux: $HOME as before. Android: $HOME, or the binary's directory when
+    // HOME is unset or unusable (adb shell); see PlatformPaths.h.
+    const std::string home = platform_paths::homeDir();
+    if (!home.empty()) {
+        return home + "/.local/share/BitCrackDistributed/";
     }
     return std::string(".");
 #endif

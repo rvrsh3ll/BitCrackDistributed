@@ -21,6 +21,8 @@ set(_BITCRACK_CORE_SOURCE_CANDIDATES
     ClaimCheck.cpp
     NodeIdentity.cpp
     SecretFile.cpp
+    PlatformPaths.cpp
+    TlsCa.cpp
 )
 
 # Keep headers optional; project may be partial
@@ -46,6 +48,8 @@ set(_BITCRACK_CORE_HEADER_CANDIDATES
     ${CMAKE_SOURCE_DIR}/include/ClaimCheck.h
     ${CMAKE_SOURCE_DIR}/include/NodeIdentity.h
     ${CMAKE_SOURCE_DIR}/include/SecretFile.h
+    ${CMAKE_SOURCE_DIR}/include/PlatformPaths.h
+    ${CMAKE_SOURCE_DIR}/include/TlsCa.h
 )
 
 set(BITCRACK_CORE_HEADERS)
@@ -160,13 +164,9 @@ if(MSVC)
     target_compile_definitions(BitCrackCore PRIVATE OPENSSL_API_COMPAT=0x10100000L)
 endif()
 
-# Enable OpenMP if available for CPU parallelization
-find_package(OpenMP QUIET)
-if(OpenMP_CXX_FOUND)
-    target_link_libraries(BitCrackCore OpenMP::OpenMP_CXX)
-    target_compile_definitions(BitCrackCore PRIVATE OPENMP_AVAILABLE)
-    message(STATUS "OpenMP found - CPU parallelization enabled")
-endif()
+# No OpenMP: CPU parallelism is std::thread (BitCrackEngine), and no source
+# uses OpenMP. Linking it anyway only added a runtime dependency
+# (libgomp / libomp.so, which an Android build would have to ship).
 
 # Set properties
 set_target_properties(BitCrackCore PROPERTIES

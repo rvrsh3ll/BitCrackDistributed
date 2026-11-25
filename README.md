@@ -321,6 +321,13 @@ printed; `scripts/standalone_find_drill.sh` drills this whole flow end to end.
 - CUDA is optional; if present, pass `-DCUDAToolkit_ROOT=/path/to/cuda` to CMake.
 - OpenCL headers are detected automatically when present.
 
+### Android (Termux)
+
+A CPU-only command-line build runs on 64-bit Android phones in Termux, with the
+dashboard in the phone's browser. `scripts/build_android.sh` cross-compiles it
+with the Android NDK. See [docs/ANDROID.md](docs/ANDROID.md) for installing,
+running, and battery and heat advice.
+
 ### Testing
 
 The unit tests use Catch2 v3 and cover Base58 decoding, binary target engine logic, and the new networking helpers (consensus, discovery, rewards, protocol formatting).
@@ -456,6 +463,7 @@ Configuration is stored in platform-specific locations:
 - Windows: `%APPDATA%/BitCrackDistributed/config.json`
 - macOS: `~/Library/Application Support/BitCrackDistributed/config.json`
 - Linux: `~/.config/BitCrackDistributed/config.json`
+- Android (Termux): `~/.config/BitCrackDistributed/config.json`; see [docs/ANDROID.md](docs/ANDROID.md)
 
 ### Joining the public network (default seeds)
 

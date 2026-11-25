@@ -59,6 +59,7 @@ endif()
 
 set(TEST_SOURCES
     test_address_generator.cpp
+    test_wallet_varint.cpp
     test_bitcrack_engine.cpp
     test_secp256k1_scan.cpp
     test_engine_found_flow.cpp
@@ -158,6 +159,8 @@ set(TEST_SOURCES
     test_left_behind.cpp
     # --reward error printed once; --network CLI override
     test_cli_network.cpp
+    # Android: CA bundle for Electrum TLS, HOME fallback
+    test_platform_android.cpp
     # Lease on approved claims (stalled holders lose them)
     test_claim_lease.cpp
     # No logger debug noise on stderr

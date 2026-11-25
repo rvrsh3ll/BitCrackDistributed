@@ -1,4 +1,5 @@
 #include "BitcoinWallet.h"
+#include "CompactSize.h"
 #include "AddressGenerator.h"
 #include "ElectrumClient.h"
 #include "Logger.h"
@@ -1232,35 +1233,40 @@ std::string BitcoinWallet::finalizePsbtLocally(const std::string& psbt_json) {
                 witnesses.emplace_back();
             }
         }
-        // Now assemble final tx
+        // Now assemble final tx. Every CompactSize below goes through one
+        // sequenced, bounds-checked reader (bitcoin_tx::readCompactSize).
+        auto truncated = [&]() {
+            Logger::error("finalizePsbtLocally: unsigned tx is truncated or malformed");
+            return std::string();
+        };
+        auto skip = [&](size_t& pos, uint64_t n) {
+            if (n > unsigned_tx_bytes.size() || pos > unsigned_tx_bytes.size() - n) return false;
+            pos += static_cast<size_t>(n);
+            return true;
+        };
         size_t idx = 4;
-        auto readVarInt = [&](size_t& idx)->uint64_t { uint64_t v = unsigned_tx_bytes[idx++]; if (v<0xfd) return v; if (v==0xfd) { uint64_t r = unsigned_tx_bytes[idx] | (unsigned_tx_bytes[idx+1]<<8); idx+=2; return r; } if (v==0xfe) { uint64_t r = unsigned_tx_bytes[idx] | (unsigned_tx_bytes[idx+1]<<8) | (unsigned_tx_bytes[idx+2]<<16) | (unsigned_tx_bytes[idx+3]<<24); idx+=4; return r; } uint64_t r=0; for (int i=0;i<8;i++) r|=((uint64_t)unsigned_tx_bytes[idx++])<<(8*i); return r; };
-        uint64_t vin_count = readVarInt(idx);
+        if (unsigned_tx_bytes.size() < idx) return truncated();
+        uint64_t vin_count = 0;
+        if (!bitcoin_tx::readCompactSize(unsigned_tx_bytes, idx, vin_count)) return truncated();
         size_t inputs_start_off = idx; // start of the first input (after vin varint)
         // Compute outputs offset by scanning inputs
         size_t tmp_idx = inputs_start_off;
         for (uint64_t i=0;i<vin_count;i++) {
-            tmp_idx += 32; // txid
-            tmp_idx += 4;  // vout
-            // skip script length varint
-            uint64_t s = unsigned_tx_bytes[tmp_idx++];
-            if (s == 0xfd) { s = unsigned_tx_bytes[tmp_idx++] | (unsigned_tx_bytes[tmp_idx++]<<8); }
-            else if (s == 0xfe) { s = unsigned_tx_bytes[tmp_idx++] | (unsigned_tx_bytes[tmp_idx++]<<8) | (unsigned_tx_bytes[tmp_idx++]<<16) | (unsigned_tx_bytes[tmp_idx++]<<24); }
-            else if (s == 0xff) { uint64_t r = 0; for (int b=0;b<8;b++) r |= ((uint64_t)unsigned_tx_bytes[tmp_idx++]) << (8*b); s = r; }
-            tmp_idx += s; // skip script
-            tmp_idx += 4; // seq
+            uint64_t s = 0;
+            if (!skip(tmp_idx, 32 + 4)) return truncated();  // txid + vout
+            if (!bitcoin_tx::readCompactSize(unsigned_tx_bytes, tmp_idx, s)) return truncated();  // script length
+            if (!skip(tmp_idx, s) || !skip(tmp_idx, 4)) return truncated();  // script + sequence
         }
         size_t outputs_off = tmp_idx;
         // Compute outputs_end (position of locktime)
         size_t tmp2 = outputs_off;
-        uint64_t vout_count = readVarInt(tmp2);
+        uint64_t vout_count = 0;
+        if (!bitcoin_tx::readCompactSize(unsigned_tx_bytes, tmp2, vout_count)) return truncated();
         for (uint64_t i=0;i<vout_count;i++) {
-            tmp2 += 8; // value
-            uint64_t sl = unsigned_tx_bytes[tmp2++];
-            if (sl == 0xfd) { sl = unsigned_tx_bytes[tmp2++] | (unsigned_tx_bytes[tmp2++]<<8); }
-            else if (sl == 0xfe) { sl = unsigned_tx_bytes[tmp2++] | (unsigned_tx_bytes[tmp2++]<<8) | (unsigned_tx_bytes[tmp2++]<<16) | (unsigned_tx_bytes[tmp2++]<<24); }
-            else if (sl == 0xff) { uint64_t r=0; for (int b=0;b<8;b++) r|=((uint64_t)unsigned_tx_bytes[tmp2++]) << (8*b); sl = r; }
-            tmp2 += sl;
+            uint64_t sl = 0;
+            if (!skip(tmp2, 8)) return truncated();  // value
+            if (!bitcoin_tx::readCompactSize(unsigned_tx_bytes, tmp2, sl)) return truncated();
+            if (!skip(tmp2, sl)) return truncated();
         }
         size_t outputs_end = tmp2;
         Logger::info(std::string("finalizePsbtLocally: vin_count from unsigned tx: ") + std::to_string(vin_count));
@@ -1284,13 +1290,12 @@ std::string BitcoinWallet::finalizePsbtLocally(const std::string& psbt_json) {
             for (int k=0;k<4;k++) final_tx.push_back(unsigned_tx_bytes[in_idx + k]); in_idx += 4;
             // skip original script varint + script; we will insert our own scriptSig
             // read original script length varint at in_idx, compute its size
+            // (the scan above already bounds-checked every input)
             size_t tmp_i = in_idx;
-            uint64_t orig_sl = unsigned_tx_bytes[tmp_i++];
-            if (orig_sl == 0xfd) { orig_sl = unsigned_tx_bytes[tmp_i++] | (unsigned_tx_bytes[tmp_i++]<<8); }
-            else if (orig_sl == 0xfe) { orig_sl = unsigned_tx_bytes[tmp_i++] | (unsigned_tx_bytes[tmp_i++]<<8) | (unsigned_tx_bytes[tmp_i++]<<16) | (unsigned_tx_bytes[tmp_i++]<<24); }
-            else if (orig_sl == 0xff) { uint64_t r = 0; for (int b=0;b<8;b++) r |= ((uint64_t)unsigned_tx_bytes[tmp_i++]) << (8*b); orig_sl = r; }
+            uint64_t orig_sl = 0;
+            if (!bitcoin_tx::readCompactSize(unsigned_tx_bytes, tmp_i, orig_sl)) return truncated();
             // Move in_idx past original script
-            in_idx = tmp_i + orig_sl;
+            in_idx = tmp_i + static_cast<size_t>(orig_sl);
             // insert our scriptSig
             auto& ss = scriptSigs[j];
             writeVarIntToVec(final_tx, ss.size());

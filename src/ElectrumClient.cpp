@@ -1,4 +1,5 @@
 #include "ElectrumClient.h"
+#include "TlsCa.h"
 #include "Logger.h"
 #include "AddressGenerator.h"
 #include "json.hpp"
@@ -154,6 +155,13 @@ std::string ElectrumClient::call(const std::string& method, const json& params) 
         if (port_ == 50002) {
             asio::ssl::context ctx(asio::ssl::context::tls_client);
             ctx.set_default_verify_paths();
+            // Without a usable default store (OpenSSL built for Android or a
+            // portable package) load a CA bundle; see TlsCa.h.
+            if (const std::string ca = tls_ca::resolveCaFile(); !ca.empty()) {
+                asio::error_code ca_ec;
+                ctx.load_verify_file(ca, ca_ec);
+                if (ca_ec) Logger::warn("Electrum: cannot load CA bundle " + ca + ": " + ca_ec.message());
+            }
             ctx.set_verify_mode(asio::ssl::verify_peer);
 
             asio::ssl::stream<asio::ip::tcp::socket> stream(io, ctx);

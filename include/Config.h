@@ -201,6 +201,10 @@ struct Config {
     // host:port; a non-loopback host is refused unless api_allow_remote.
     bool api_enabled = false;
     std::string api_bind = "127.0.0.1:3339";
+    // CA bundle (PEM) for the Electrum TLS check, loaded in addition to
+    // OpenSSL's default store. Empty: the default store, else cacert.pem next
+    // to the binary, else a system bundle (see TlsCa.h).
+    std::string tls_ca_file;
     bool api_allow_remote = false;
     // Look up the current puzzle address's on-chain balance (via the
     // configured Electrum servers) for the dashboard Puzzle panel.

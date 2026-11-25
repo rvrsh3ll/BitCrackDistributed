@@ -1,4 +1,5 @@
 #include "WorkState.h"
+#include "TlsCa.h"
 #include "Logger.h"
 #include <stdexcept>
 #include <iostream>
@@ -557,6 +558,8 @@ public:
         platform = "Windows";
 #elif defined(MACOS)
         platform = "macOS";
+#elif defined(__ANDROID__)
+        platform = "Android";
 #elif defined(LINUX)
         platform = "Linux";
 #else
@@ -607,6 +610,7 @@ public:
             }
             
             auto config = config_manager_->getConfig();
+            tls_ca::setConfiguredCaFile(config.tls_ca_file);
             if (config_manager_->lastLoadFailedToParse() && config.network.enable_p2p) {
                 // Defaults would join the network with no node id (a new
                 // alias that peers that know this node reject) and default

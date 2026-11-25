@@ -12,6 +12,7 @@
 
 #ifndef _WIN32
 #include <sys/wait.h>
+#include <unistd.h>  // getpid (glibc pulls it in indirectly, bionic does not)
 #endif
 
 namespace fs = std::filesystem;
