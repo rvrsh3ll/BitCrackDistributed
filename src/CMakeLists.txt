@@ -10,6 +10,7 @@ set(_BITCRACK_CORE_SOURCE_CANDIDATES
     PuzzleManager.cpp
     BitcoinWallet.cpp
     ElectrumClient.cpp
+    PuzzleBalance.cpp
     Secp256k1Scan.cpp
     WorkState.cpp
     KeyspaceBlock.cpp
@@ -34,6 +35,7 @@ set(_BITCRACK_CORE_HEADER_CANDIDATES
     ${CMAKE_SOURCE_DIR}/include/KeyUtils.h
     ${CMAKE_SOURCE_DIR}/include/PuzzleManager.h
     ${CMAKE_SOURCE_DIR}/include/BitcoinWallet.h
+    ${CMAKE_SOURCE_DIR}/include/PuzzleBalance.h
     ${CMAKE_SOURCE_DIR}/include/Secp256k1Scan.h
     ${CMAKE_SOURCE_DIR}/include/WorkState.h
     ${CMAKE_SOURCE_DIR}/include/KeyspaceBlock.h

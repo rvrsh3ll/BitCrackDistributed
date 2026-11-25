@@ -131,6 +131,10 @@ const fmtInt=n=>(n==null||isNaN(n))?"-":Number(n).toLocaleString("en-US");
 function fmtRate(k){k=Number(k)||0;if(k>=1e9)return(k/1e9).toFixed(2)+" Gkeys/s";if(k>=1e6)return(k/1e6).toFixed(2)+" Mkeys/s";if(k>=1e3)return(k/1e3).toFixed(1)+" kkeys/s";return k.toFixed(0)+" keys/s"}
 function fmtShort(k){k=Number(k)||0;if(k>=1e12)return(k/1e12).toFixed(1)+"T";if(k>=1e9)return(k/1e9).toFixed(1)+"G";if(k>=1e6)return(k/1e6).toFixed(1)+"M";if(k>=1e3)return(k/1e3).toFixed(1)+"k";return String(Math.round(k))}
 function fmtDur(s){s=Math.max(0,Math.floor(Number(s)||0));const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);if(d)return d+"d "+h+"h";if(h)return h+"h "+m+"m";if(m)return m+"m "+(s%60)+"s";return s+"s"}
+function fmtBtc(sats){return(Number(sats)/1e8).toFixed(8)+" BTC"}
+function fmtAgo(ms){const s=Math.max(0,Math.floor((Date.now()-Number(ms))/1000));if(s<45)return"just now";if(s<3600)return Math.floor(s/60)+" min ago";if(s<86400)return Math.floor(s/3600)+" h ago";return Math.floor(s/86400)+" d ago"}
+function puzzleBalance(pz){if(pz.balance_sats!=null){let v=fmtBtc(pz.balance_sats);if(pz.balance_unconfirmed_sats)v+=" (includes unconfirmed)";return v}return pz.balance_pending?"checking…":"unavailable"}
+function puzzleChecked(pz){if(pz.balance_checked_at){let t=fmtAgo(pz.balance_checked_at)+" ("+new Date(pz.balance_checked_at).toLocaleString()+")";if(pz.balance_source)t+=" via "+pz.balance_source;return t}return pz.balance_pending?"looking up…":"—"}
 const tz=(()=>{try{return new Intl.DateTimeFormat("en-US",{timeZoneName:"short"}).formatToParts(new Date()).find(p=>p.type==="timeZoneName").value}catch(e){return""}})();
 const fmtClock=ms=>new Date(ms).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
 const fmtClockS=ms=>new Date(ms).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",second:"2-digit"});
@@ -197,7 +201,7 @@ async function fast(){
   $("chunks").textContent=fmtInt(s.chunks_completed_local);
   $("chunk_cur").textContent=s.current_chunk&&s.current_chunk.id?s.current_chunk.id:"no chunk";
   const pz=s.puzzle||{};
-  kv("puzzle",[["Puzzle",pz.number!=null?"#"+pz.number:"-"],["Target",pz.address||"-",true],["Range start",pz.range_start||"-",true],["Range end",pz.range_end||"-",true],["Reward address",s.reward_address||"not set",true],["Found key",s.found_key?"YES (see the node's found-key file)":"no"]]);
+  kv("puzzle",[["Puzzle",pz.number!=null?"#"+pz.number:"-"],["Target",pz.address||"-",true],["Balance",puzzleBalance(pz)],["Checked",puzzleChecked(pz)],["Range start",pz.range_start||"-",true],["Range end",pz.range_end||"-",true],["Reward address",s.reward_address||"not set",true],["Found key",s.found_key?"YES (see the node's found-key file)":"no"]]);
   $("peer_rows").innerHTML=p.peers.length?p.peers.map(x=>`<tr><td class="mono">${esc(nodeName(x.alias||x.id))}${x.alias&&x.alias!==x.id?`<div class="muted">link ${esc(x.id)}</div>`:""}</td><td class="mono">${esc(x.address)}</td><td>${esc(fmtDur(x.connected_seconds))}</td><td>${x.handshake_complete?"yes":"no"}</td><td>${esc(x.auth)}</td></tr>`).join(""):`<tr><td colspan="5" class="muted">No peers connected.</td></tr>`;
   $("peers_note").textContent=p.count+" connected";
   const cc=c.current_chunk||{};

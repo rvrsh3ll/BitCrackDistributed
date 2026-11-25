@@ -5,6 +5,7 @@
 // from the engine and the network manager; nothing is changed.
 // Never put private keys, found keys or RPC credentials in these views.
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -16,6 +17,7 @@
 
 #include "Config.h"
 #include "KeyspaceMap.h"
+#include "PuzzleBalance.h"
 #include "json.hpp"
 
 class BitCrackEngine;
@@ -59,6 +61,13 @@ public:
     // Keep the last kMaxLogLines INFO+ log lines for events(). Off by default;
     // main.cpp turns it on only for a loopback-bound API. Call before start().
     void setLogCapture(bool on) { capture_logs_ = on; }
+
+    // Replace the default Electrum lookup (tests inject a mock). Call before
+    // start() or use refreshPuzzleBalanceNow() for a synchronous fetch.
+    void setPuzzleBalanceLookup(PuzzleBalanceCache::Lookup lookup);
+    void setPuzzleBalanceInterval(std::chrono::milliseconds interval);
+    bool refreshPuzzleBalanceNow();
+    PuzzleBalanceSnapshot puzzleBalance() const;
 
     static constexpr size_t kHistoryPoints = 720;    // 1 h at the 5 s sample interval
     static constexpr size_t kHistoryMinutes = 1440;  // 24 h
@@ -132,4 +141,8 @@ private:
     std::condition_variable run_cv_;
     bool running_ = false;
     std::thread thread_;
+
+    // Puzzle address balance: background fetch, read-only snapshot in status().
+    mutable PuzzleBalanceCache puzzle_balance_;
+    std::atomic<bool> puzzle_balance_abort_{false};
 };

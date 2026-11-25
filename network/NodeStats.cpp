@@ -1,6 +1,7 @@
 #include "NodeStats.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <map>
 #include <unordered_map>
@@ -10,6 +11,7 @@
 #include "AddressGenerator.h"
 #include "Logger.h"
 #include "NetworkManager.h"
+#include "PuzzleBalance.h"
 #include "PuzzleManager.h"
 #include "RewardAddress.h"
 
@@ -71,6 +73,28 @@ const char* levelName(int level) {
         default: return "info";
     }
 }
+
+bool isMainnetNetwork(const std::string& network) {
+    std::string n = network;
+    for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return n.empty() || n == "mainnet" || n == "main";
+}
+
+void applyPuzzleBalance(nlohmann::json& puzzle, const PuzzleBalanceSnapshot& snap, const std::string& address) {
+    const bool match = !address.empty() && snap.address == address;
+    if (match && snap.available) {
+        puzzle["balance_sats"] = PuzzleBalanceCache::totalSats(snap.confirmed_sats, snap.unconfirmed_sats);
+        puzzle["balance_unconfirmed_sats"] = snap.unconfirmed_sats;
+        puzzle["balance_checked_at"] = snap.checked_at_ms;
+        puzzle["balance_source"] = snap.source;
+    } else {
+        puzzle["balance_sats"] = nullptr;
+        puzzle["balance_unconfirmed_sats"] = nullptr;
+        puzzle["balance_checked_at"] = nullptr;
+        puzzle["balance_source"] = "";
+    }
+    puzzle["balance_pending"] = match ? snap.pending : !address.empty();
+}
 }  // namespace
 
 NodeStats::NodeStats(const Config& config, BitCrackEngine* engine, NetworkManager* network)
@@ -78,6 +102,21 @@ NodeStats::NodeStats(const Config& config, BitCrackEngine* engine, NetworkManage
     // Credentials never needed here; keep them out of this copy entirely.
     config_.bitcoin_rpc_password.clear();
     config_.bitcoin_rpc_user.clear();
+    puzzle_balance_.setAddressProvider([this]() -> std::string {
+        if (!network_) return std::string();
+        return network_->getCurrentPuzzle().target_address;
+    });
+    // Mainnet only: a regtest/testnet puzzle address is not on the public
+    // Electrum servers, and we never want those lookups against mainnet.
+    if (config_.api_puzzle_balance && isMainnetNetwork(config_.bitcoin_network) &&
+        !config_.electrum_servers.empty()) {
+        puzzle_balance_.setLookup(
+            makeElectrumBalanceLookup(config_.electrum_servers, &puzzle_balance_abort_));
+    }
+    auto interval = std::chrono::seconds(config_.api_puzzle_balance_interval_s);
+    if (interval < std::chrono::seconds(30)) interval = std::chrono::seconds(30);
+    if (interval > std::chrono::hours(1)) interval = std::chrono::hours(1);
+    puzzle_balance_.setInterval(interval);
 }
 
 NodeStats::~NodeStats() { stop(); }
@@ -106,6 +145,8 @@ void NodeStats::start(std::chrono::milliseconds sample_interval, std::chrono::se
         log_cb_set_ = true;
     }
     sampleNow();
+    puzzle_balance_abort_ = false;
+    if (config_.api_puzzle_balance && puzzle_balance_.hasLookup()) puzzle_balance_.start();
     thread_ = std::thread([this, sample_interval, log_interval] {
         auto next_log = std::chrono::steady_clock::now() + log_interval;
         std::unique_lock<std::mutex> lk(run_mu_);
@@ -132,6 +173,8 @@ void NodeStats::stop() {
         Logger::removeLogCallback(log_cb_id_);
         log_cb_set_ = false;
     }
+    puzzle_balance_abort_ = true;
+    puzzle_balance_.stop();
     {
         std::lock_guard<std::mutex> lk(run_mu_);
         if (!running_ && !thread_.joinable()) return;
@@ -140,6 +183,21 @@ void NodeStats::stop() {
     run_cv_.notify_all();
     if (thread_.joinable()) thread_.join();
 }
+
+void NodeStats::setPuzzleBalanceLookup(PuzzleBalanceCache::Lookup lookup) {
+    puzzle_balance_.setLookup(std::move(lookup));
+}
+
+void NodeStats::setPuzzleBalanceInterval(std::chrono::milliseconds interval) {
+    puzzle_balance_.setInterval(interval);
+}
+
+bool NodeStats::refreshPuzzleBalanceNow() {
+    if (network_) puzzle_balance_.observeAddress(network_->getCurrentPuzzle().target_address);
+    return puzzle_balance_.refreshNow();
+}
+
+PuzzleBalanceSnapshot NodeStats::puzzleBalance() const { return puzzle_balance_.snapshot(); }
 
 void NodeStats::sampleNow() {
     uint64_t total = 0;
@@ -150,6 +208,7 @@ void NodeStats::sampleNow() {
         const auto snap = network_->getChainSnapshot();
         height = snap.initialized ? snap.height : 0;
         peers = static_cast<uint32_t>(network_->getPeerDetails().size());
+        puzzle_balance_.observeAddress(network_->getCurrentPuzzle().target_address);
     }
     const double cpu_s = processCpuSeconds();
     const auto now = std::chrono::steady_clock::now();
@@ -335,6 +394,8 @@ nlohmann::json NodeStats::status() const {
         const PuzzleInfo p = network_->getCurrentPuzzle();  // only number/address/range are read
         j["puzzle"] = {{"number", p.number}, {"address", p.target_address},
                        {"range_start", p.range_start}, {"range_end", p.range_end}};
+        puzzle_balance_.observeAddress(p.target_address);
+        applyPuzzleBalance(j["puzzle"], puzzle_balance_.snapshot(), p.target_address);
         const ChunkSummary cs = network_->getChunkSummary();
         j["current_chunk"] = {{"id", cs.current_chunk_id}, {"start", cs.current_start}, {"end", cs.current_end}};
         j["chunks_completed_local"] = cs.completed_local;
@@ -348,6 +409,7 @@ nlohmann::json NodeStats::status() const {
     } else {
         j["node_id"] = "";
         j["puzzle"] = json::object();
+        applyPuzzleBalance(j["puzzle"], puzzle_balance_.snapshot(), "");
         j["current_chunk"] = json::object();
         j["chunks_completed_local"] = 0;
         j["chain"] = {{"height", 0}, {"tip", ""}};

@@ -165,6 +165,8 @@ TEST_CASE("API refuses a non-loopback bind unless api_allow_remote", "[api]") {
     REQUIRE_FALSE(def.api_enabled);
     REQUIRE(def.api_bind == "127.0.0.1:3339");
     REQUIRE_FALSE(def.api_allow_remote);
+    REQUIRE(def.api_puzzle_balance);
+    REQUIRE(def.api_puzzle_balance_interval_s == 300);
 }
 
 TEST_CASE("API request-line parsing", "[api]") {
@@ -247,6 +249,12 @@ TEST_CASE("API serves status, peers and chunks with the documented fields and no
     REQUIRE(s["puzzle"]["number"] == nm.getCurrentPuzzle().number);
     REQUIRE(s["puzzle"]["address"] == nm.getCurrentPuzzle().target_address);
     REQUIRE(s["puzzle"].contains("address"));
+    REQUIRE(s["puzzle"].contains("balance_sats"));
+    REQUIRE(s["puzzle"].contains("balance_checked_at"));
+    REQUIRE(s["puzzle"].contains("balance_source"));
+    REQUIRE(s["puzzle"].contains("balance_pending"));
+    // This test clears Electrum servers, so there is no lookup and no figure.
+    REQUIRE(s["puzzle"]["balance_sats"].is_null());
     REQUIRE(s["chain"].contains("height"));
     REQUIRE(s["chain"].contains("tip"));
     REQUIRE(s["current_chunk"].contains("id"));
@@ -371,6 +379,7 @@ TEST_CASE("API config keys load from and save to config.json", "[api]") {
     {
         std::ofstream f(file);
         f << "{ \"api_enabled\": true, \"api_bind\": \"127.0.0.1:4000\","
+             " \"api_puzzle_balance\": false, \"api_puzzle_balance_interval_s\": 120,"
              " \"network\": { \"node_uuid\": \"83838383-0000-4000-8000-000000000083\" } }";
     }
     {
@@ -379,6 +388,8 @@ TEST_CASE("API config keys load from and save to config.json", "[api]") {
         REQUIRE(cm.getConfig().api_enabled);
         REQUIRE(cm.getConfig().api_bind == "127.0.0.1:4000");
         REQUIRE_FALSE(cm.getConfig().api_allow_remote);
+        REQUIRE_FALSE(cm.getConfig().api_puzzle_balance);
+        REQUIRE(cm.getConfig().api_puzzle_balance_interval_s == 120);
         REQUIRE(cm.save());
     }
     std::ifstream in(file);
@@ -386,6 +397,8 @@ TEST_CASE("API config keys load from and save to config.json", "[api]") {
     REQUIRE(j["api_enabled"] == true);
     REQUIRE(j["api_bind"] == "127.0.0.1:4000");
     REQUIRE(j["api_allow_remote"] == false);
+    REQUIRE(j["api_puzzle_balance"] == false);
+    REQUIRE(j["api_puzzle_balance_interval_s"] == 120);
     fs::remove_all(dir);
 }
 

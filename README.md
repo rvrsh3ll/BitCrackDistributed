@@ -673,7 +673,8 @@ The page is compiled into the binary (HTML, CSS and JS in one file, charts
 drawn as inline SVG and canvas; nothing is loaded from the internet) and
 refreshes itself from the stats API below: status and keys/s (now, 1 min,
 10 min), a keys/s chart over the last hour or 24 hours, chain height and
-peers over time, the peer list, the current chunk, puzzle and reward address,
+peers over time, the peer list, the current chunk, the current puzzle (target
+address, on-chain balance, reward address),
 search hardware (CPU threads, GPU-only mode, GPU devices, process CPU), the
 keyspace coverage map and the best-chain payout split, solved puzzles with
 their payouts, and the node's recent log lines. It is read-only: it cannot
@@ -706,11 +707,23 @@ own thread. It only reads state; it never changes the engine or the P2P layer.
 {
   "api_enabled": true,
   "api_bind": "127.0.0.1:3339",
-  "api_allow_remote": false
+  "api_allow_remote": false,
+  "api_puzzle_balance": true,
+  "api_puzzle_balance_interval_s": 300
 }
 ```
 
 - `api_enabled` (default `false`), `api_bind` (default `127.0.0.1:3339`).
+- `api_puzzle_balance` (default `true`) looks up the current puzzle address's
+  on-chain balance through the configured Electrum servers (`electrum_servers`;
+  the same backend the wallet uses, but a dedicated connection so a dashboard
+  refresh never blocks a payout). The result is cached and refreshed every
+  `api_puzzle_balance_interval_s` seconds (default 300, clamped to 30–3600).
+  The first lookup starts as soon as the dashboard is up. The fetch runs on a
+  background thread: it never blocks the API handler or the search/P2P
+  threads. Mainnet only; on regtest/testnet, or if the lookup fails, the
+  Puzzle panel shows "unavailable". Set `api_puzzle_balance` to `false` to
+  disable the lookup.
 - A non-loopback `api_bind` (e.g. `0.0.0.0:3339`) is refused at startup unless
   `api_allow_remote` is `true`. There is no authentication or TLS, so keep it on
   loopback and reach it over SSH (`ssh host curl -s http://127.0.0.1:3339/status`).
@@ -721,7 +734,7 @@ own thread. It only reads state; it never changes the engine or the P2P layer.
 
 | Endpoint | Fields |
 |---|---|
-| `GET /status` | `node_id`, `version`, `commit`, `puzzle` (`number`, `address`, range), `target_count`, `keys_per_second` (last ~5 s), `keys_per_second_1m`, `keys_per_second_10m`, `total_keys_checked` (since start), `uptime_seconds`, `current_chunk` (`id`, `start`, `end`), `chunks_completed_local`, `chain` (`height`, `tip`), `peer_count`, `reward_address`, `found_key` (true/false only), `engine_running`, `rescan` (`listed`, `remaining`; only when a rescan list is set) |
+| `GET /status` | `node_id`, `version`, `commit`, `puzzle` (`number`, `address`, range, `balance_sats` / `balance_unconfirmed_sats` / `balance_checked_at` (unix ms) / `balance_source` / `balance_pending`; `balance_sats` is null until a successful lookup), `target_count`, `keys_per_second` (last ~5 s), `keys_per_second_1m`, `keys_per_second_10m`, `total_keys_checked` (since start), `uptime_seconds`, `current_chunk` (`id`, `start`, `end`), `chunks_completed_local`, `chain` (`height`, `tip`), `peer_count`, `reward_address`, `found_key` (true/false only), `engine_running`, `rescan` (`listed`, `remaining`; only when a rescan list is set) |
 | `GET /peers` | `count`, `peers[]`: `id`, `alias`, `address`, `connected_seconds`, `handshake_complete`, `auth` |
 | `GET /chunks` | `completed_total`, `completed_local`, `completed_unrewarded`, `completed_by_peer`, `claims_approved`, `claims_pending`, `chunk_size`, `current_chunk` |
 | `GET /rewards` | `payout` (`mode`, `enable_mpc`, `mpc_threshold`, `finder_percent`, `contributor_pool_percent`, `bitcoin_network`), `total_keys`, `peer_count`, `peers[]`, `addresses[]`, `keys_without_valid_address`, `keys_unique_searched` |

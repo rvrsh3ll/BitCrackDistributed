@@ -186,6 +186,8 @@ set(TEST_SOURCES
     test_node_api.cpp
     # HTML dashboard + /history /system /events
     test_dashboard_api.cpp
+    # Puzzle address on-chain balance (dashboard Puzzle panel)
+    test_puzzle_balance.cpp
     support/TestIsolation.cpp
     # Standalone engine skips puzzles solved here at startup
     test_engine_startup_skip.cpp

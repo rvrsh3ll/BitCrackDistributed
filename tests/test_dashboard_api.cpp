@@ -315,4 +315,73 @@ TEST_CASE("Events list solved puzzles and payouts but never a private key", "[ap
     REQUIRE(got.private_key == secret);
     for (const auto& ev : nm.recentPuzzleSolvedEvents()) REQUIRE(ev.private_key.empty());
 }
+
+TEST_CASE("Status puzzle object carries the cached on-chain balance", "[api][dashboard][puzzle-balance]") {
+    Config cfg = dashConfig("bcd_dash_balance");
+    ResourceMonitor monitor(cfg);
+    BitCrackEngine engine(cfg, &monitor);
+    NetworkManager nm(cfg, &engine);
+    nm.initializePuzzle();
+    const std::string addr = nm.getCurrentPuzzle().target_address;
+    REQUIRE_FALSE(addr.empty());
+
+    NodeStats stats(cfg, &engine, &nm);
+    auto body = [&] {
+        const auto r = NodeApi::route(stats, "GET", "/status");
+        REQUIRE(r.status == 200);
+        return nlohmann::json::parse(r.body);
+    };
+
+    // No lookup configured (tests clear Electrum servers): fields are present
+    // and null, and the dashboard can show "unavailable".
+    auto s = body();
+    REQUIRE(s["puzzle"]["address"] == addr);
+    REQUIRE(s["puzzle"]["balance_sats"].is_null());
+    REQUIRE(s["puzzle"]["balance_checked_at"].is_null());
+    REQUIRE(s["puzzle"]["balance_source"] == "");
+    REQUIRE(s["puzzle"].contains("balance_pending"));
+
+    int calls = 0;
+    stats.setPuzzleBalanceLookup([&](const std::string& a, uint64_t& c, int64_t& u, std::string& src) {
+        ++calls;
+        REQUIRE(a == addr);
+        c = 670000000;
+        u = 0;
+        src = "electrum";
+        return true;
+    });
+    REQUIRE(stats.refreshPuzzleBalanceNow());
+    REQUIRE(calls == 1);
+    s = body();
+    REQUIRE(s["puzzle"]["balance_sats"] == 670000000);
+    REQUIRE(s["puzzle"]["balance_unconfirmed_sats"] == 0);
+    REQUIRE(s["puzzle"]["balance_checked_at"].get<int64_t>() > 0);
+    REQUIRE(s["puzzle"]["balance_source"] == "electrum");
+    REQUIRE(s["puzzle"]["balance_pending"] == false);
+
+    // A failed refresh keeps the last good balance for this address.
+    stats.setPuzzleBalanceLookup([&](const std::string&, uint64_t&, int64_t&, std::string&) {
+        ++calls;
+        return false;
+    });
+    REQUIRE_FALSE(stats.refreshPuzzleBalanceNow());
+    s = body();
+    REQUIRE(s["puzzle"]["balance_sats"] == 670000000);
+    REQUIRE(s["puzzle"]["balance_source"] == "electrum");
+
+    // The dashboard page renders a Balance row from those fields.
+    const std::string html = NodeApi::dashboardHtml();
+    REQUIRE(html.find("[\"Balance\"") != std::string::npos);
+    REQUIRE(html.find("function puzzleBalance") != std::string::npos);
+    REQUIRE(html.find("unavailable") != std::string::npos);
+}
+
+TEST_CASE("Puzzle balance fields stay null without a network and never include a key", "[api][dashboard][puzzle-balance]") {
+    NodeStats stats(Config{}, nullptr, nullptr);
+    const auto r = NodeApi::route(stats, "GET", "/status");
+    const auto s = nlohmann::json::parse(r.body);
+    REQUIRE(s["puzzle"]["balance_sats"].is_null());
+    REQUIRE(s["puzzle"]["balance_pending"] == false);
+    REQUIRE(r.body.find("private") == std::string::npos);
+}
 #endif

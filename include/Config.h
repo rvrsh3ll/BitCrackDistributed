@@ -202,6 +202,13 @@ struct Config {
     bool api_enabled = false;
     std::string api_bind = "127.0.0.1:3339";
     bool api_allow_remote = false;
+    // Look up the current puzzle address's on-chain balance (via the
+    // configured Electrum servers) for the dashboard Puzzle panel.
+    // Off: no lookup, the panel shows "unavailable". Mainnet only.
+    // The fetch runs in the background every api_puzzle_balance_interval_s
+    // (default 5 min) and never blocks the API or the search/P2P threads.
+    bool api_puzzle_balance = true;
+    uint32_t api_puzzle_balance_interval_s = 300;
     
     // Core settings
     NetworkConfig network;

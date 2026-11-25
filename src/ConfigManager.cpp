@@ -231,6 +231,8 @@ void ConfigManager::toJson(const Config& config, std::string& json) const {
     j["api_enabled"] = config.api_enabled;
     j["api_bind"] = config.api_bind;
     j["api_allow_remote"] = config.api_allow_remote;
+    j["api_puzzle_balance"] = config.api_puzzle_balance;
+    j["api_puzzle_balance_interval_s"] = config.api_puzzle_balance_interval_s;
     j["save_progress"] = config.save_progress;
     j["progress_save_interval_ms"] = config.progress_save_interval_ms;
     j["data_directory"] = config.data_directory;
@@ -353,6 +355,11 @@ bool ConfigManager::fromJson(const std::string& json, Config& config) const {
         config.api_enabled = j.value("api_enabled", config.api_enabled);
         config.api_bind = j.value("api_bind", config.api_bind);
         config.api_allow_remote = j.value("api_allow_remote", config.api_allow_remote);
+        config.api_puzzle_balance = j.value("api_puzzle_balance", config.api_puzzle_balance);
+        config.api_puzzle_balance_interval_s =
+            j.value("api_puzzle_balance_interval_s", config.api_puzzle_balance_interval_s);
+        if (config.api_puzzle_balance_interval_s < 30) config.api_puzzle_balance_interval_s = 30;
+        if (config.api_puzzle_balance_interval_s > 3600) config.api_puzzle_balance_interval_s = 3600;
         config.save_progress = j.value("save_progress", config.save_progress);
         config.progress_save_interval_ms = j.value("progress_save_interval_ms", config.progress_save_interval_ms);
         config.data_directory = j.value("data_directory", config.data_directory);
