@@ -679,6 +679,14 @@ keyspace coverage map and the best-chain payout split, solved puzzles with
 their payouts, and the node's recent log lines. It is read-only: it cannot
 start, stop or reconfigure the node.
 
+![Dashboard overview: keys/s, search-rate, chain-height and peer charts, the peer list, puzzle, and current chunk](docs/images/dashboard-overview.png)
+
+*A GPU node on the public network at 123 Mkeys/s: search rate, chain height, peers, and the current chunk.*
+
+![Dashboard keyspace map, payout split, search hardware, and live log](docs/images/dashboard-keyspace-payout.png)
+
+*Further down the same page: keyspace coverage, payout split from the best chain, search hardware, and the live log.*
+
 - `--dashboard` is the same as `"api_enabled": true`; `--api-bind host:port`
   overrides `api_bind` for one run (e.g. a second node on one machine:
   `--api-bind 127.0.0.1:3340`).
