@@ -268,8 +268,8 @@ jobs:
           gh release upload "$TAG" "upload/$PKGNAME.zip" --clobber
           mkdir assets && cd assets
           gh release download "$TAG" --pattern '*' --skip-existing
-          rm -f SHA256SUMS
-          find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
-          cat SHA256SUMS
-          sha256sum -c SHA256SUMS
-          gh release upload "$TAG" SHA256SUMS --clobber
+          # Written outside assets/ so the new file can't list itself.
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > ../SHA256SUMS
+          cat ../SHA256SUMS
+          sha256sum -c ../SHA256SUMS
+          gh release upload "$TAG" ../SHA256SUMS --clobber
