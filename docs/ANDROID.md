@@ -45,7 +45,7 @@ phone > tap *Build number* seven times, then Settings > System > Developer
 options > *USB debugging*):
 
 ```sh
-adb push bitcrack-distributed-v1.1.0-android-arm64-cli.tar.gz /sdcard/Download/
+adb push bitcrack-distributed-v1.1.1-android-arm64-cli.tar.gz /sdcard/Download/
 ```
 
 Then in Termux, allow storage access once and copy the file into Termux's
@@ -54,15 +54,15 @@ home. Android does not let programs run from `/sdcard`, so it has to be in
 
 ```sh
 termux-setup-storage          # tap Allow
-cp ~/storage/downloads/bitcrack-distributed-v1.1.0-android-arm64-cli.tar.gz ~
+cp ~/storage/downloads/bitcrack-distributed-v1.1.1-android-arm64-cli.tar.gz ~
 ```
 
 ## 3. Unpack and check it
 
 ```sh
 cd ~
-tar -xzf bitcrack-distributed-v1.1.0-android-arm64-cli.tar.gz
-cd bitcrack-distributed-v1.1.0-android-arm64-cli
+tar -xzf bitcrack-distributed-v1.1.1-android-arm64-cli.tar.gz
+cd bitcrack-distributed-v1.1.1-android-arm64-cli
 chmod +x bitcrack-distributed
 ./bitcrack-distributed --version
 ./bitcrack-distributed --bench 10      # 10 s CPU benchmark, optional

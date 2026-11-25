@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
-project(BitCrackDistributed VERSION 1.1.0 LANGUAGES CXX)
+project(BitCrackDistributed VERSION 1.1.1 LANGUAGES CXX)
 
 # Preserve compatibility with helper downloads invoked via FetchContent_Populate.
 if(POLICY CMP0169)
