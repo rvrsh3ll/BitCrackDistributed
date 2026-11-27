@@ -12,6 +12,12 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <climits>
+#include <cstdint>
+#include <vector>
+#endif
 #endif
 
 namespace platform_paths {
@@ -29,6 +35,16 @@ std::string executableDir() {
 #elif defined(__linux__)  // includes Android
     std::error_code ec;
     const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec || exe.empty()) return std::string();
+    return exe.parent_path().string();
+#elif defined(__APPLE__)
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);  // fails and reports the needed size
+    if (size == 0) return std::string();
+    std::vector<char> buf(size + 1, '\0');
+    if (_NSGetExecutablePath(buf.data(), &size) != 0) return std::string();
+    std::error_code ec;
+    const auto exe = std::filesystem::canonical(std::filesystem::path(buf.data()), ec);
     if (ec || exe.empty()) return std::string();
     return exe.parent_path().string();
 #else

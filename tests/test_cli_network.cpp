@@ -13,6 +13,7 @@
 #ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>  // getpid (glibc pulls it in indirectly, bionic does not)
+#include "support/CliTimeout.h"
 #endif
 
 namespace fs = std::filesystem;
@@ -59,7 +60,7 @@ struct CliSandbox {
     // Console mode with stdin closed: the node starts, sees EOF and exits.
     CliRun run(const std::string& args) const {
         const fs::path out = dir / "stdout.txt", err = dir / "stderr.txt";
-        const std::string cmd = "cd '" + dir.string() + "' && HOME='" + dir.string() + "' timeout 60 '" +
+        const std::string cmd = "cd '" + dir.string() + "' && HOME='" + dir.string() + "' " BCD_TEST_TIMEOUT "'" +
                                 std::string(BITCRACK_MAIN_BINARY) + "' --console --cpu --power 5 --config '" +
                                 config.string() + "' " + args + " </dev/null >'" + out.string() + "' 2>'" +
                                 err.string() + "'";

@@ -328,6 +328,13 @@ dashboard in the phone's browser. `scripts/build_android.sh` cross-compiles it
 with the Android NDK. See [docs/ANDROID.md](docs/ANDROID.md) for installing,
 running, and battery and heat advice.
 
+### macOS (Apple Silicon and Intel)
+
+A CPU-only command-line build runs on Apple Silicon and Intel Macs, with the
+dashboard in the browser. `scripts/build_macos.sh` builds it with a static
+OpenSSL. See [docs/MACOS.md](docs/MACOS.md) for installing (including the
+unsigned-binary Gatekeeper step), running, and choosing how many cores to use.
+
 ### Testing
 
 The unit tests use Catch2 v3 and cover Base58 decoding, binary target engine logic, and the new networking helpers (consensus, discovery, rewards, protocol formatting).

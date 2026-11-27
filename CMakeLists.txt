@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
-project(BitCrackDistributed VERSION 1.1.1 LANGUAGES CXX)
+project(BitCrackDistributed VERSION 1.1.2 LANGUAGES CXX)
 
 # Preserve compatibility with helper downloads invoked via FetchContent_Populate.
 if(POLICY CMP0169)
@@ -266,8 +266,6 @@ if(WIN32)
     add_definitions(-DWINDOWS)
 elseif(APPLE)
     add_definitions(-DMACOS)
-    find_library(COREFOUNDATION_LIBRARY CoreFoundation)
-    find_library(IOKIT_LIBRARY IOKit)
 else()
     add_definitions(-DLINUX)
 endif()
@@ -322,8 +320,6 @@ endif()
 
 if(WIN32)
     target_link_libraries(bitcrack-distributed PRIVATE ws2_32 iphlpapi)
-elseif(APPLE)
-    target_link_libraries(bitcrack-distributed PRIVATE ${COREFOUNDATION_LIBRARY} ${IOKIT_LIBRARY})
 endif()
 
 # Configure file with build options

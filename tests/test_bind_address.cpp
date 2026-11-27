@@ -31,6 +31,7 @@
 #if defined(BITCRACK_MAIN_BINARY) && !defined(_WIN32)
 #include <cstdlib>
 #include <sstream>
+#include "support/CliTimeout.h"
 #endif
 
 namespace {
@@ -216,7 +217,7 @@ TEST_CASE("invalid bind_address in config.json exits 1 with a clear error", "[ne
     std::filesystem::create_directories(dir / "data");
     const auto out = dir / "stdout.txt";
     const auto err = dir / "stderr.txt";
-    const std::string cmd = "cd '" + dir.string() + "' && HOME='" + dir.string() + "' timeout 60 '" +
+    const std::string cmd = "cd '" + dir.string() + "' && HOME='" + dir.string() + "' " BCD_TEST_TIMEOUT "'" +
                             std::string(BITCRACK_MAIN_BINARY) + "' --console --cpu --power 5 --config '" +
                             config.string() + "' --reward 1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH </dev/null >'" +
                             out.string() + "' 2>'" + err.string() + "'";

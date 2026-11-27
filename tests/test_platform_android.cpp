@@ -121,7 +121,7 @@ TEST_CASE("platform_paths: Android falls back to the binary's directory", "[plat
 }
 
 TEST_CASE("platform_paths: executableDir finds the test binary", "[platform_paths]") {
-#if defined(__linux__) || defined(_WIN32)
+#if defined(__linux__) || defined(_WIN32) || defined(__APPLE__)
     const std::string dir = platform_paths::executableDir();
     REQUIRE_FALSE(dir.empty());
     CHECK(fs::is_directory(dir));

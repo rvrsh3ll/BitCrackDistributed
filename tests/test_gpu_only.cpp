@@ -30,6 +30,7 @@
 #include "Logger.h"
 #include "ResourceMonitor.h"
 #include "support/StallAwareTimer.h"
+#include "support/CliTimeout.h"
 
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
@@ -256,7 +257,7 @@ struct CliSandbox {
     // Console mode with stdin closed: a node that starts sees EOF and exits.
     CliRun run(const std::string& args) const {
         const fs::path out = t.dir / "stdout.txt", err = t.dir / "stderr.txt";
-        const std::string cmd = "cd '" + t.dir.string() + "' && HOME='" + t.dir.string() + "' timeout 60 '" +
+        const std::string cmd = "cd '" + t.dir.string() + "' && HOME='" + t.dir.string() + "' " BCD_TEST_TIMEOUT "'" +
                                 std::string(BITCRACK_MAIN_BINARY) + "' --console --config '" + config.string() +
                                 "' " + args + " </dev/null >'" + out.string() + "' 2>'" + err.string() + "'";
         CliRun r;

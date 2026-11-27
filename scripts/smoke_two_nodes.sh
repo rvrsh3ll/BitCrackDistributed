@@ -96,7 +96,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-now_ms() { date +%s%3N; }
+# Milliseconds since the epoch. BSD/macOS date has no %N (it prints a literal
+# "3N"), so fall back to python3 there.
+now_ms() {
+    local t
+    t="$(date +%s%3N)"
+    case "$t" in
+        ''|*[!0-9]*) python3 -c 'import time; print(int(time.time() * 1000))' ;;
+        *) printf '%s\n' "$t" ;;
+    esac
+}
+# In-place sed that works with GNU and BSD sed. SED_NL is a backslash plus a
+# real newline: the one way to put a newline in a replacement on both.
+sed_i() { local f="${*: -1}"; sed "${@:1:$#-1}" "$f" >"$f.sedtmp" && mv "$f.sedtmp" "$f"; }
+SED_NL=$'\\\n'
 # Deadlines count only time the box was running. A box stall (VM pause,
 # heavy oversubscription) freezes this script and the nodes alike; with a
 # plain wall-clock deadline the script then failed right after it resumed
@@ -164,17 +177,17 @@ fi
 write_config "$WORK/a" "$PORT_A" '[]' "$REWARD_A" "11111111-1111-4111-8111-111111111111"
 write_config "$WORK/b" "$PORT_B" "[\"127.0.0.1:$PORT_A\"]" "$REWARD_B" "22222222-2222-4222-8222-222222222222"
 if [[ "${BIG_CHUNKS:-0}" == "1" ]]; then
-    sed -i 's/^    "enable_p2p": true,$/    "enable_p2p": true,\n    "chunk_sizing": "always", "chunk_target_s": '"${BIG_TARGET_S:-30}"',/' "$WORK/a/config.json"
+    sed_i 's/^    "enable_p2p": true,$/    "enable_p2p": true,'"$SED_NL"'    "chunk_sizing": "always", "chunk_target_s": '"${BIG_TARGET_S:-30}"',/' "$WORK/a/config.json"
     grep -q '"chunk_sizing": "always"' "$WORK/a/config.json" || { echo "FAIL: could not set chunk_sizing for node A" >&2; exit 2; }
 fi
 if [[ "${V4:-0}" == "1" ]]; then
     for n in a b; do
-        sed -i 's/^    "enable_p2p": true,$/    "enable_p2p": true,\n    "consensus_v4_height": '"${V4_HEIGHT:-3}"',/' "$WORK/$n/config.json"
+        sed_i 's/^    "enable_p2p": true,$/    "enable_p2p": true,'"$SED_NL"'    "consensus_v4_height": '"${V4_HEIGHT:-3}"',/' "$WORK/$n/config.json"
         grep -q '"consensus_v4_height"' "$WORK/$n/config.json" || { echo "FAIL: could not set consensus_v4_height for node $n" >&2; exit 2; }
     done
 fi
 if [[ "${API:-0}" == "1" ]]; then
-    sed -i 's|^  "data_directory": |  "api_enabled": true, "api_bind": "127.0.0.1:'"${API_PORT:-3339}"'",\n  "data_directory": |' "$WORK/a/config.json"
+    sed_i 's|^  "data_directory": |  "api_enabled": true, "api_bind": "127.0.0.1:'"${API_PORT:-3339}"'",'"$SED_NL"'  "data_directory": |' "$WORK/a/config.json"
     grep -q '"api_enabled": true' "$WORK/a/config.json" || { echo "FAIL: could not enable the API for node A" >&2; exit 2; }
 fi
 DUMMY_KEY="4848484848484848484848484848484848484848484848484848484848484848"

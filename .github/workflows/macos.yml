@@ -1,0 +1,246 @@
+name: macOS build
+
+# Manual-only (Actions tab > "macOS build" > Run workflow, or
+#   gh workflow run macos.yml -f ref=v1.1.1 -f release_tag=v1.1.1).
+# Builds the CPU-only command-line node for Apple Silicon (arm64, macos-15) and
+# Intel (x86_64, macos-15-intel) with scripts/build_macos.sh (static OpenSSL, no
+# Homebrew libraries needed at run time), runs the unit tests, checks the
+# packaged binary (only system libraries linked, no build-host paths, runs
+# clean, dashboard answers, two-node smoke) and uploads a tar.gz per
+# architecture as a workflow artifact. If release_tag is set, both tarballs are
+# also attached to that existing release (replacing assets of the same name)
+# and SHA256SUMS is regenerated over all of the release's assets.
+#
+# macOS 13 and 14 runner images are retired; GitHub documents macos-15-intel as
+# the last Intel image (available until August 2027).
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (tag, branch or SHA). Empty = the commit this run was started on.'
+        required: false
+        default: ''
+      release_tag:
+        description: 'Existing release tag to attach the tarballs to (e.g. v1.1.1). Empty = artifacts only.'
+        required: false
+        default: ''
+      run_tests:
+        description: 'Run bitcrack_tests (except [regtest], which needs bitcoind) before packaging.'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    env:
+      ARCH: ${{ matrix.arch }}
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Machine info
+        run: |
+          uname -a; sw_vers; sysctl -n machdep.cpu.brand_string || true
+          xcodebuild -version || true; clang --version; cmake --version
+          echo "hw.ncpu=$(sysctl -n hw.ncpu)"
+
+      - name: Install build tools
+        run: |
+          command -v ninja >/dev/null || brew install ninja
+          command -v cmake >/dev/null || brew install cmake
+
+      - name: Package tag
+        id: tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          src="$(git rev-parse HEAD)"
+          if [ -n "$RELEASE_TAG" ]; then tag="$RELEASE_TAG"; else
+            ver="$(sed -n 's/^project([^)]*VERSION \([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -1)"
+            tag="v$ver-${src:0:7}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "src=$src" >> "$GITHUB_OUTPUT"
+
+      - name: Restore static OpenSSL
+        id: ossl
+        uses: actions/cache/restore@v4
+        with:
+          path: build-macos-${{ matrix.arch }}/deps/openssl-3.4.1-*
+          key: macos-openssl-${{ matrix.arch }}-${{ hashFiles('scripts/build_macos.sh') }}
+
+      - name: Build, package (static OpenSSL, CPU only)
+        env:
+          WITH_TESTS: '1'
+          PACKAGE: '1'
+          PKG_TAG: ${{ steps.tag.outputs.tag }}
+        run: scripts/build_macos.sh build-macos-${{ matrix.arch }}
+
+      - name: Save static OpenSSL
+        if: ${{ !cancelled() && steps.ossl.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: build-macos-${{ matrix.arch }}/deps/openssl-3.4.1-*
+          key: macos-openssl-${{ matrix.arch }}-${{ hashFiles('scripts/build_macos.sh') }}
+
+      - name: Unit tests (all but [regtest])
+        if: inputs.run_tests
+        timeout-minutes: 45
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          cd build-macos-${{ matrix.arch }}
+          ./Release/bitcrack_tests "~[regtest]" -r compact 2>&1 | tee ../logs/unit-tests-${{ matrix.arch }}.txt | tail -60
+
+      - name: Check the packaged binary
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          dist="build-macos-${{ matrix.arch }}/dist"
+          name="bitcrack-distributed-$TAG-macos-${{ matrix.arch }}-cpu"
+          test -f "$dist/$name.tar.gz"
+          rm -rf check && mkdir check && tar -xzf "$dist/$name.tar.gz" -C check
+          pkg="check/$name"
+          ls -l "$pkg"
+          bin="$pkg/bitcrack-distributed"
+          echo "--- file / lipo / codesign"
+          file "$bin"
+          archs="$(lipo -archs "$bin")"; echo "archs: $archs"
+          [ "$archs" = "${{ matrix.arch }}" ] || { echo "wrong architecture: $archs"; exit 1; }
+          codesign -dv "$bin" 2>&1 || true
+          codesign --verify --strict "$bin"
+          vtool -show-build "$bin" || true
+          echo "--- otool -L (only system libraries allowed)"
+          otool -L "$bin" | tee logs/otool-${{ matrix.arch }}.txt
+          bad="$(otool -L "$bin" | tail -n +2 | awk '{print $1}' | grep -vE '^(/usr/lib/|/System/Library/)' || true)"
+          if [ -n "$bad" ]; then echo "non-system libraries linked:"; echo "$bad"; exit 1; fi
+          echo "--- run it (clean environment)"
+          run() { env -i HOME="$RUNNER_TEMP/home" PATH=/usr/bin:/bin "$@"; }
+          mkdir -p "$RUNNER_TEMP/home"
+          v="$(run "$bin" --version 2>&1)"; echo "$v"
+          echo "$v" | grep -q "$(sed -n 's/^project([^)]*VERSION \([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -1)" || { echo "version mismatch"; exit 1; }
+          echo "$v" | grep -q 'Platform: macOS' || { echo "platform is not macOS"; exit 1; }
+          run "$bin" --help | grep -q -- '--dashboard'
+          d="$(run "$bin" --derive-address 1 2>&1)"; echo "$d"
+          echo "$d" | grep -q 1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH
+          echo "--- bench 5 s"
+          run "$bin" --bench 5 2>&1 | tee logs/bench-${{ matrix.arch }}.txt | tail -15
+          echo "--- default CA store"
+          ls -l /etc/ssl/cert.pem
+          echo "--- build-host paths / secrets in the binary"
+          strings -a "$bin" | grep -vx '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz' > logs/strings-${{ matrix.arch }}.txt
+          if grep -nE '/Users/|/Volumes/|/opt/homebrew|/Cellar/|runner/work|_work/' logs/strings-${{ matrix.arch }}.txt | head -20 | grep .; then echo "host path found"; exit 1; fi
+          if grep -nE 'bc1q[a-z0-9]{38}|[5KL][1-9A-HJ-NP-Za-km-z]{50,51}' logs/strings-${{ matrix.arch }}.txt | head | grep .; then echo "address or key-looking string found"; exit 1; fi
+
+      - name: Standalone node + dashboard from the package
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          bin="$PWD/check/bitcrack-distributed-$TAG-macos-${{ matrix.arch }}-cpu/bitcrack-distributed"
+          tmp="$RUNNER_TEMP/dash"; rm -rf "$tmp"; mkdir -p "$tmp/home"
+          cat > "$tmp/config.json" <<JSON
+          {"data_directory": "$tmp", "reward_address": "bc1qzarehesk3gnh9emgd4t7sjgsu7dwp79545c2nh",
+           "network": {"enable_p2p": false, "bootstrap_nodes": [], "enable_upnp": false, "bind_address": "127.0.0.1"}}
+          JSON
+          ( cd "$tmp"; HOME="$tmp/home" exec "$bin" --cpu --daemon --dashboard --config "$tmp/config.json" ) > "$tmp/out.log" 2>&1 &
+          pid=$!
+          ok=0
+          for i in $(seq 1 60); do
+            sleep 1
+            page="$(curl -sf --max-time 5 http://127.0.0.1:3339/ || true)"
+            case "$page" in *'<title>BitCrack Distributed dashboard</title>'*) ok=1; break ;; esac
+          done
+          if [ $ok != 1 ]; then tail -60 "$tmp/out.log"; kill "$pid" 2>/dev/null || true; echo "dashboard not served"; exit 1; fi
+          curl -sf --max-time 5 http://127.0.0.1:3339/status | tee "$tmp/status.json" | head -c 600; echo
+          sleep 5
+          kill -INT "$pid"
+          for i in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$pid" 2>/dev/null; then echo "node did not stop on SIGINT"; kill -9 "$pid"; exit 1; fi
+          rc=0; wait "$pid" || rc=$?
+          echo "node exit code: $rc"
+          [ "$rc" = 0 ] || { tail -30 "$tmp/out.log"; exit 1; }
+          grep -E 'CA |TLS|cert|Platform|Server listening|search' "$tmp/out.log" | head -20 || true
+
+      - name: Two-node smoke (packaged binary)
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          bin="$PWD/check/bitcrack-distributed-$TAG-macos-${{ matrix.arch }}-cpu/bitcrack-distributed"
+          SEARCH_TIMEOUT=180 CONNECT_TIMEOUT=60 scripts/smoke_two_nodes.sh "$bin" 2>&1 | tee logs/smoke-${{ matrix.arch }}.txt | tail -40
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitcrack-distributed-${{ steps.tag.outputs.tag }}-macos-${{ matrix.arch }}-cpu
+          path: |
+            build-macos-${{ matrix.arch }}/dist/*.tar.gz
+            build-macos-${{ matrix.arch }}/dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-logs-${{ matrix.arch }}
+          path: |
+            logs/
+            build-macos-${{ matrix.arch }}/deps/openssl-*.log
+            build-macos-${{ matrix.arch }}/CMakeCache.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+  attach:
+    name: Attach to release ${{ inputs.release_tag }}
+    needs: build
+    if: inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ inputs.release_tag }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bitcrack-distributed-*-macos-*-cpu
+          merge-multiple: true
+          path: upload
+
+      - name: Upload tarballs and regenerate SHA256SUMS
+        run: |
+          set -euo pipefail
+          ls -l upload
+          gh release view "$TAG" --json tagName >/dev/null   # must already exist; never creates one
+          gh release upload "$TAG" upload/*.tar.gz --clobber
+          mkdir assets && cd assets
+          gh release download "$TAG" --pattern '*' --skip-existing
+          # Written outside assets/ so the new file can't list itself.
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > ../SHA256SUMS
+          cat ../SHA256SUMS
+          sha256sum -c ../SHA256SUMS
+          gh release upload "$TAG" ../SHA256SUMS --clobber

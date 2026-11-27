@@ -32,6 +32,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "support/CliTimeout.h"
 #endif
 
 namespace fs = std::filesystem;
@@ -293,7 +294,7 @@ struct CliOut {
 };
 CliOut runNode(const fs::path& dir) {
     const fs::path out = dir / "stdout.txt", err = dir / "stderr.txt";
-    const std::string cmd = "cd '" + dir.string() + "' && HOME='" + dir.string() + "' timeout 60 '" +
+    const std::string cmd = "cd '" + dir.string() + "' && HOME='" + dir.string() + "' " BCD_TEST_TIMEOUT "'" +
                             std::string(BITCRACK_MAIN_BINARY) + "' --console --cpu --power 5 --config '" +
                             (dir / "config.json").string() + "' </dev/null >'" + out.string() + "' 2>'" +
                             err.string() + "'";

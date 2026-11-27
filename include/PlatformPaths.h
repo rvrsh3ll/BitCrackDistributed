@@ -5,7 +5,8 @@
 namespace platform_paths {
 
 // Directory of the running executable ("" if it cannot be determined).
-// Linux/Android: /proc/self/exe. Windows: GetModuleFileName. Others: "".
+// Linux/Android: /proc/self/exe. Windows: GetModuleFileName.
+// macOS: _NSGetExecutablePath (symlinks resolved). Others: "".
 std::string executableDir();
 
 // The home directory used for the default config and data paths.

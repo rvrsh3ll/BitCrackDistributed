@@ -137,9 +137,7 @@ endif()
 # Platform-specific libraries
 if(WIN32)
     target_link_libraries(BitCrackCore pdh winhttp)
-elseif(APPLE)
-    target_link_libraries(BitCrackCore ${COREFOUNDATION_LIBRARY} ${IOKIT_LIBRARY})
-elseif(UNIX)
+elseif(UNIX AND NOT APPLE)
     # Linux libraries for system monitoring
     find_library(PROCPS_LIBRARY procps)
     if(PROCPS_LIBRARY)
